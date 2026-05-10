@@ -22,50 +22,25 @@
             <span class="font-mono text-xs">{{ sessionId }}</span>
           </span>
         </div>
-        <div
-          v-if="modelName"
-          class="model-badge"
-          :title="`Model: ${modelName}`"
-        >
-          <span class="text-base">🧠</span>
-          <span class="text-xs font-bold">{{ formatModelName(modelName) }}</span>
-        </div>
-        <div
-          class="event-count-badge"
-          @mouseover="hoveredEventCount = true"
-          @mouseleave="hoveredEventCount = false"
-          :title="`Total events in the last ${timeRange === '1m' ? '1 minute' : timeRange === '3m' ? '3 minutes' : '5 minutes'}`"
-        >
-          <span class="text-base w-4 flex-shrink-0">⚡</span>
-          <span class="text-xs font-bold" :class="hoveredEventCount ? 'min-w-[65px]' : ''">
-            {{ hoveredEventCount ? `${totalEventCount} Events` : totalEventCount }}
-          </span>
-        </div>
-        <div
-          class="tool-call-badge"
-          @mouseover="hoveredToolCount = true"
-          @mouseleave="hoveredToolCount = false"
-          :title="`Tool calls in the last ${timeRange === '1m' ? '1 minute' : timeRange === '3m' ? '3 minutes' : '5 minutes'}`"
-        >
-          <span class="text-base w-4 flex-shrink-0">🔧</span>
-          <span class="text-xs font-bold" :class="hoveredToolCount ? 'min-w-[75px]' : ''">
-            {{ hoveredToolCount ? `${toolCallCount} Tool Calls` : toolCallCount }}
-          </span>
-        </div>
-        <div
-          class="avg-time-badge flex items-center gap-1.5 px-2 py-2 bg-[var(--theme-bg-tertiary)] rounded-lg border border-[var(--theme-border-primary)] shadow-sm min-h-[28px]"
-          @mouseover="hoveredAvgTime = true"
-          @mouseleave="hoveredAvgTime = false"
-          :title="`Average time between events in the last ${timeRange === '1m' ? '1 minute' : timeRange === '3m' ? '3 minutes' : '5 minutes'}`"
-        >
-          <span class="text-lg w-5 flex-shrink-0">🕐</span>
-          <span class="text-sm font-bold text-[var(--theme-text-primary)]" :class="hoveredAvgTime ? 'min-w-[90px]' : ''">
-            {{ hoveredAvgTime ? `Avg Gap: ${formatGap(agentEventTimingMetrics.avgGap)}` : formatGap(agentEventTimingMetrics.avgGap) }}
-          </span>
-        </div>
+        <span v-if="modelName" class="lane-metric" :title="`Model: ${modelName}`">
+          <span class="lane-metric__label">model</span>
+          <span class="lane-metric__value">{{ formatModelName(modelName) }}</span>
+        </span>
+        <span class="lane-metric" :title="`Events in window`">
+          <span class="lane-metric__label">events</span>
+          <span class="lane-metric__value">{{ totalEventCount }}</span>
+        </span>
+        <span class="lane-metric" :title="`Tool calls in window`">
+          <span class="lane-metric__label">tools</span>
+          <span class="lane-metric__value">{{ toolCallCount }}</span>
+        </span>
+        <span class="lane-metric" :title="`Avg gap between events`">
+          <span class="lane-metric__label">avg gap</span>
+          <span class="lane-metric__value">{{ formatGap(agentEventTimingMetrics.avgGap) }}</span>
+        </span>
       </div>
-      <button @click="emit('close')" class="close-btn" title="Remove this swim lane">
-        ✕
+      <button @click="emit('close')" class="close-btn" title="Remove swim lane" aria-label="Remove">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="m3 3 6 6M9 3l-6 6"/></svg>
       </button>
     </div>
     <div ref="chartContainer" class="chart-wrapper">
@@ -454,15 +429,16 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   font-size: 12px;
-  font-weight: 600;
   padding: 0 7px;
-  gap: 8px;
+  gap: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 14px;
+  flex-wrap: wrap;
 }
 
 .agent-label-container {
@@ -474,80 +450,61 @@ onUnmounted(() => {
 
 .agent-label-app,
 .agent-label-session {
-  padding: 8px 8px;
-  border-radius: 0;
+  padding: 4px 8px;
   border: 1px solid currentColor;
-  color: white;
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   display: inline-flex;
   align-items: center;
-  min-height: 28px;
+  min-height: 22px;
 }
+.agent-label-app    { border-radius: 4px 0 0 4px; }
+.agent-label-session { border-radius: 0 4px 4px 0; border-left: none; opacity: 0.85; }
 
-.agent-label-app {
-  border-radius: 3px 0 0 3px;
-}
-
-.agent-label-session {
-  border-radius: 0 3px 3px 0;
-  border-left: none;
-}
-
-.model-badge,
-.event-count-badge,
-.tool-call-badge {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  background: var(--theme-bg-secondary);
-  border: 1px solid var(--theme-border-primary);
-  border-radius: 6px;
-  color: var(--theme-text-secondary);
-  font-size: 11px;
+.lane-metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
   white-space: nowrap;
-  cursor: pointer;
-  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
-  user-select: none;
-  min-height: 24px;
 }
-
-.model-badge {
-  cursor: default;
+.lane-metric__label {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--theme-text-tertiary);
 }
-
-.event-count-badge:hover,
-.tool-call-badge:hover,
-.model-badge:hover {
-  background: var(--theme-bg-tertiary);
-  border-color: var(--theme-border-secondary);
+.lane-metric__value {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   color: var(--theme-text-primary);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 }
 
 .close-btn {
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 14px;
   color: var(--theme-text-tertiary);
   padding: 0;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 3px;
-  transition: all 0.2s;
+  border-radius: 4px;
+  transition: background-color 0.12s ease, color 0.12s ease;
   flex-shrink: 0;
 }
 
 .close-btn:hover {
-  background: var(--theme-bg-quaternary);
+  background: var(--theme-hover-bg);
   color: var(--theme-text-primary);
-  transform: scale(1.1);
 }
 
 .chart-wrapper {
