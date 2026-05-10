@@ -17,10 +17,172 @@ initDatabase();
 // Store WebSocket clients
 const wsClients = new Set<any>();
 
+// --- Load Atlas bot env (router needs ANTHROPIC_API_KEY) ---
+try {
+  const envText = await Bun.file('/Users/hrmacnair/atlas/bot-tg/.env').text();
+  for (const line of envText.split('\n')) {
+    const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)\s*$/);
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+  }
+} catch (err) {
+  console.warn('[atlas] bot-tg/.env not loaded, talk endpoint may fail:', (err as Error).message);
+}
+
 // --- Atlas dashboard stats ---
 // Cached briefly to avoid hammering codeburn / disk on every dashboard refresh.
 let atlasStatsCache: { ts: number; data: any } | null = null;
 const ATLAS_STATS_TTL_MS = 30_000;
+
+let atlasPendingCache: { ts: number; data: any[] } | null = null;
+const ATLAS_PENDING_TTL_MS = 10_000;
+
+let atlasBriefsCache: { ts: number; data: any[] } | null = null;
+const ATLAS_BRIEFS_TTL_MS = 60_000;
+
+const ATLAS_HOME = '/Users/hrmacnair/atlas';
+const BRIEFS_ARCHIVE = `${ATLAS_HOME}/briefs/archive`;
+const ROUTING_LOG = `${ATLAS_HOME}/memory/routing.log`;
+
+// Stub: future approval queue (cold email drafts, invoice approvals, etc.)
+async function getAtlasPending(): Promise<any[]> {
+  if (atlasPendingCache && Date.now() - atlasPendingCache.ts < ATLAS_PENDING_TTL_MS) {
+    return atlasPendingCache.data;
+  }
+  const items: any[] = []; // wiring TBD — see decisions.md 2026-05-10 Phase 9b
+  atlasPendingCache = { ts: Date.now(), data: items };
+  return items;
+}
+
+// Walk briefs archive, parse title + tldr first line
+async function getAtlasBriefs(): Promise<any[]> {
+  if (atlasBriefsCache && Date.now() - atlasBriefsCache.ts < ATLAS_BRIEFS_TTL_MS) {
+    return atlasBriefsCache.data;
+  }
+  const briefs: any[] = [];
+  try {
+    const proc = Bun.spawn(['bash', '-c', `find "${BRIEFS_ARCHIVE}" -maxdepth 2 -type f -name '*.html' -not -name 'index.html' | sort -r`], { stdout: 'pipe' });
+    const out = (await new Response(proc.stdout).text()).trim();
+    await proc.exited;
+    const paths = out.split('\n').filter(Boolean);
+    for (const p of paths) {
+      const parts = p.split('/');
+      const slug = (parts[parts.length - 1] || '').replace(/\.html$/, '');
+      const date = parts[parts.length - 2] || '';
+      let title = slug;
+      let tldr = '';
+      let topic = slug;
+      try {
+        const html = await Bun.file(p).text();
+        const h1 = html.match(/<h1[^>]*class="brief-title"[^>]*>([\s\S]*?)<\/h1>/i);
+        if (h1) title = stripTags(h1[1]).slice(0, 200);
+        else {
+          const t = html.match(/<title>([^<]+)<\/title>/i);
+          if (t) title = t[1].replace(/\s·\satlas$/i, '').trim().slice(0, 200);
+        }
+        // First bullet or paragraph after TL;DR
+        const tldrBlock = html.match(/<h2[^>]*>\s*TL[^<]*<\/h2>([\s\S]*?)(?:<h2|<\/article>)/i);
+        if (tldrBlock) {
+          const inner = tldrBlock[1];
+          const firstLi = inner.match(/<li[^>]*>([\s\S]*?)<\/li>/i);
+          const firstP  = inner.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
+          tldr = stripTags((firstLi?.[1] || firstP?.[1] || '')).slice(0, 240).trim();
+        }
+        // Topic: derive from slug prefix
+        if (slug.startsWith('margin')) topic = 'margin';
+        else if (slug.startsWith('industry')) topic = 'industry';
+        else if (slug.startsWith('hollywood')) topic = 'hollywood';
+        else topic = slug.split('-')[0] || 'other';
+      } catch {/* skip parse failure */}
+
+      briefs.push({
+        date,
+        topic,
+        slug,
+        title,
+        tldr,
+        path: p,
+        url: `http://localhost:5174/${date}/${slug}.html`,
+      });
+    }
+  } catch (err: any) {
+    console.error('[atlas/briefs] walk failed:', err.message);
+  }
+  atlasBriefsCache = { ts: Date.now(), data: briefs };
+  return briefs;
+}
+
+function stripTags(s: string): string {
+  return s.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim();
+}
+
+// Dynamic-import the bot-tg router (it's ESM JS). routeMessage classifies
+// the prompt, backendFor maps tier → CLI backend.
+async function atlasTalk(message: string): Promise<{ reply: string; decision: any }> {
+  const router = await import('/Users/hrmacnair/atlas/bot-tg/router.js');
+  const decision = await router.routeMessage(message);
+  const { backend, model } = router.backendFor(decision.model);
+  const cwd = router.workingDirFor(decision.agent, decision.project);
+  const systemPrompt = router.systemPromptFor(decision.agent, decision.project, 'dashboard');
+
+  let reply: string;
+  try {
+    if (backend === 'anthropic') {
+      reply = await runClaudeCLI({ model, prompt: message, systemPrompt, cwd });
+    } else if (backend === 'openai' || backend === 'ollama') {
+      reply = await runCodexCLI({ backend, model, prompt: message, systemPrompt, cwd });
+    } else {
+      reply = `(unsupported backend: ${backend})`;
+    }
+  } catch (err: any) {
+    reply = `(model error: ${err.message?.slice(0, 240) || err})`;
+  }
+
+  // Log routing decision
+  try {
+    router.logRoutingDecision({ surface: 'dashboard', message, decision });
+  } catch {/* non-fatal */}
+
+  return { reply, decision };
+}
+
+const CLAUDE_BIN = '/Users/hrmacnair/.local/bin/claude';
+const CODEX_BIN  = '/Users/hrmacnair/.npm-global/bin/codex';
+
+async function runClaudeCLI(opts: { model: string; prompt: string; systemPrompt: string; cwd: string }): Promise<string> {
+  const childEnv: any = { ...process.env };
+  delete childEnv.ANTHROPIC_API_KEY; // claude CLI prefers subscription auth
+  const proc = Bun.spawn(
+    [CLAUDE_BIN, '--print', '--model', opts.model, '--append-system-prompt', opts.systemPrompt, opts.prompt],
+    { cwd: opts.cwd, env: childEnv, stdout: 'pipe', stderr: 'pipe' }
+  );
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  const code = await proc.exited;
+  if (code === 0) return stdout.trim();
+  throw new Error(`claude exited ${code}: ${(stderr || stdout).slice(0, 400)}`);
+}
+
+async function runCodexCLI(opts: { backend: string; model: string; prompt: string; systemPrompt: string; cwd: string }): Promise<string> {
+  const tmpFile = `/tmp/atlas-codex-${Date.now()}-${Math.random().toString(36).slice(2,8)}.txt`;
+  const fullPrompt = `${opts.systemPrompt}\n\n---\n\n${opts.prompt}`;
+  const args = ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-m', opts.model, '--output-last-message', tmpFile];
+  if (opts.backend === 'ollama') args.push('--oss', '--local-provider', 'ollama');
+  args.push(fullPrompt);
+  const proc = Bun.spawn([CODEX_BIN, ...args], { cwd: opts.cwd, env: { ...process.env }, stdout: 'pipe', stderr: 'pipe' });
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  const code = await proc.exited;
+  if (code === 0) {
+    try {
+      const text = await Bun.file(tmpFile).text();
+      try { await Bun.write(tmpFile, ''); } catch {}
+      return text.trim();
+    } catch (err: any) {
+      throw new Error(`codex output parse failed: ${err.message}`);
+    }
+  }
+  throw new Error(`codex exited ${code}: ${(stderr || stdout).slice(0, 400)}`);
+}
 
 async function getAtlasStats() {
   if (atlasStatsCache && Date.now() - atlasStatsCache.ts < ATLAS_STATS_TTL_MS) {
@@ -32,7 +194,34 @@ async function getAtlasStats() {
     codeburn: { today: null, month: null, error: null },
     caveman: { sessions: 0, error: null },
     briefs: { recent: [], error: null },
+    services: { healthy: 0, total: 0, items: [], error: null },
   };
+
+  // Atlas LaunchAgent health — parse `launchctl list | grep ^com.atlas.`
+  try {
+    const proc = Bun.spawn(['bash', '-c', `launchctl list 2>/dev/null | awk '$3 ~ /^com\\.atlas\\./'`], { stdout: 'pipe' });
+    const out = (await new Response(proc.stdout).text()).trim();
+    await proc.exited;
+    const items = out.split('\n').filter(Boolean).map((line) => {
+      const parts = line.split(/\s+/);
+      const pid = parts[0];
+      const lastExit = parts[1];
+      const name = parts[2];
+      return {
+        name,
+        pid: pid === '-' ? null : parseInt(pid),
+        last_exit: parseInt(lastExit),
+        status: pid !== '-' && parseInt(lastExit) === 0 ? 'running'
+              : pid === '-' && parseInt(lastExit) === 0 ? 'idle'
+              : 'failing',
+      };
+    });
+    data.services.items = items;
+    data.services.total = items.length;
+    data.services.healthy = items.filter(i => i.status === 'running' || i.status === 'idle').length;
+  } catch (err: any) {
+    data.services.error = err.message;
+  }
 
   // codeburn status: "Today  $19.14  191 calls    Month  $1467.41  6000 calls"
   try {
@@ -63,26 +252,17 @@ async function getAtlasStats() {
     data.caveman.error = err.message;
   }
 
-  // recent briefs: ~/atlas/briefs/static/index_*.html (newest 5 by mtime)
+  // recent briefs: pull top 5 from full archive list (already parsed)
   try {
-    const proc = Bun.spawn(
-      ['bash', '-c', `ls -t /Users/hrmacnair/atlas/briefs/static/*.html 2>/dev/null | head -5`],
-      { stdout: 'pipe' }
-    );
-    const out = await new Response(proc.stdout).text();
-    await proc.exited;
-    data.briefs.recent = out
-      .trim()
-      .split('\n')
-      .filter(Boolean)
-      .map((path) => {
-        const filename = path.split('/').pop() || '';
-        return {
-          path,
-          filename,
-          url: `http://localhost:5174/${filename}`,
-        };
-      });
+    const all = await getAtlasBriefs();
+    data.briefs.recent = all.slice(0, 5).map((b) => ({
+      path: b.path,
+      filename: b.slug,
+      date: b.date,
+      title: b.title,
+      topic: b.topic,
+      url: `/api/atlas/briefs/file?path=${encodeURIComponent(b.path)}`,
+    }));
   } catch (err: any) {
     data.briefs.error = err.message;
   }
@@ -257,6 +437,72 @@ const server = Bun.serve({
       return new Response(JSON.stringify(stats), {
         headers: { ...headers, 'Content-Type': 'application/json' }
       });
+    }
+
+    // GET /api/atlas/pending - stub for future approval queue
+    if (url.pathname === '/api/atlas/pending' && req.method === 'GET') {
+      const items = await getAtlasPending();
+      return new Response(JSON.stringify({ items }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // POST /api/atlas/pending/:id/approve
+    if (url.pathname.match(/^\/api\/atlas\/pending\/[^\/]+\/approve$/) && req.method === 'POST') {
+      return new Response(JSON.stringify({ approved: true, id: url.pathname.split('/')[4] }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // POST /api/atlas/pending/:id/reject
+    if (url.pathname.match(/^\/api\/atlas\/pending\/[^\/]+\/reject$/) && req.method === 'POST') {
+      return new Response(JSON.stringify({ rejected: true, id: url.pathname.split('/')[4] }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // GET /api/atlas/briefs - walk ~/atlas/briefs/archive/<date>/<slug>.html
+    if (url.pathname === '/api/atlas/briefs' && req.method === 'GET') {
+      const briefs = await getAtlasBriefs();
+      return new Response(JSON.stringify({ briefs }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // GET /api/atlas/briefs/file?path=... - proxy a brief HTML for iframe (CORS-safe)
+    if (url.pathname === '/api/atlas/briefs/file' && req.method === 'GET') {
+      const filePath = url.searchParams.get('path') || '';
+      if (!filePath.startsWith('/Users/hrmacnair/atlas/briefs/archive/')) {
+        return new Response('forbidden', { status: 403, headers });
+      }
+      try {
+        const html = await Bun.file(filePath).text();
+        return new Response(html, { headers: { ...headers, 'Content-Type': 'text/html; charset=utf-8' } });
+      } catch (err: any) {
+        return new Response(`not found: ${err.message}`, { status: 404, headers });
+      }
+    }
+
+    // POST /api/atlas/talk - route + spawn model, return reply
+    if (url.pathname === '/api/atlas/talk' && req.method === 'POST') {
+      try {
+        const body = await req.json() as { message?: string };
+        const message = (body.message || '').toString().trim();
+        if (!message) {
+          return new Response(JSON.stringify({ error: 'message required' }), {
+            status: 400, headers: { ...headers, 'Content-Type': 'application/json' }
+          });
+        }
+        const result = await atlasTalk(message);
+        return new Response(JSON.stringify(result), {
+          headers: { ...headers, 'Content-Type': 'application/json' }
+        });
+      } catch (err: any) {
+        console.error('[atlas/talk] error:', err);
+        return new Response(JSON.stringify({ error: err.message || 'talk failed' }), {
+          status: 500, headers: { ...headers, 'Content-Type': 'application/json' }
+        });
+      }
     }
 
     // POST /events/:id/respond - Respond to HITL request
