@@ -1,151 +1,154 @@
 <template>
-  <div class="atlas-shell">
-    <AtlasTopBar class="atlas-shell__topbar" />
+  <div class="atlas-page" v-show="!readingBrief">
+    <WordmarkRow />
+    <div class="atlas-page__divider"></div>
+    <StatusRow />
+    <div class="atlas-page__divider"></div>
 
-    <nav class="atlas-shell__nav" aria-label="Atlas sections">
-      <a href="#today">Today</a>
-      <a href="#activity">Activity</a>
-      <a href="#briefs">Briefs</a>
-      <a href="#talk">Talk</a>
-    </nav>
+    <main class="atlas-page__grid">
+      <section class="atlas-page__left">
+        <div id="stats" class="atlas-page__stats-row">
+          <TokenSpendCard />
+          <ServicesCard id="services" />
+        </div>
+        <WhatAtlasDidCard :events="events" />
+        <TalkCard />
+        <LiveActivityCard :events="events" />
+      </section>
 
-    <section id="today" class="atlas-shell__today">
-      <TodayPanel :events="events" />
-    </section>
+      <section id="brief" class="atlas-page__right">
+        <TodaysBriefCard
+          :compact="isCompact"
+          @open-full="onOpenFull"
+          @open-prior="onOpenPrior"
+        />
+      </section>
+    </main>
 
-    <section id="activity" class="atlas-shell__activity">
-      <ActivityPanel :events="events" @clear-events="clearEvents" />
-    </section>
-
-    <section id="briefs" class="atlas-shell__briefs">
-      <BriefsPanel @open-brief="openBrief" />
-    </section>
-
-    <section id="talk" class="atlas-shell__talk">
-      <TalkDock />
-    </section>
-
-    <BriefViewerModal
-      v-if="openBriefData"
-      :brief="openBriefData"
-      @close="openBriefData = null"
-    />
-
-    <div v-if="error" class="atlas-error">{{ error }}</div>
+    <p v-if="error" class="atlas-page__error">{{ error }}</p>
   </div>
+
+  <BriefReadingView
+    v-if="readingBrief"
+    :brief="readingBrief"
+    @close="readingBrief = null"
+  />
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { useWebSocket } from './composables/useWebSocket';
-import { useThemes } from './composables/useThemes';
-import AtlasTopBar from './components/AtlasTopBar.vue';
-import TodayPanel from './views/TodayView.vue';
-import ActivityPanel from './views/ActivityView.vue';
-import BriefsPanel from './views/BriefsView.vue';
-import TalkDock from './views/TalkView.vue';
-import BriefViewerModal from './components/BriefViewerModal.vue';
-import { WS_URL } from './config';
+import { useTheme } from './composables/useTheme';
+import WordmarkRow from './components/dashboard/WordmarkRow.vue';
+import StatusRow from './components/dashboard/StatusRow.vue';
+import TokenSpendCard from './components/dashboard/cards/TokenSpendCard.vue';
+import ServicesCard from './components/dashboard/cards/ServicesCard.vue';
+import WhatAtlasDidCard from './components/dashboard/cards/WhatAtlasDidCard.vue';
+import TalkCard from './components/dashboard/cards/TalkCard.vue';
+import LiveActivityCard from './components/dashboard/cards/LiveActivityCard.vue';
+import TodaysBriefCard from './components/dashboard/cards/TodaysBriefCard.vue';
+import BriefReadingView from './views/BriefReadingView.vue';
+import { API_BASE_URL, WS_URL } from './config';
 
-const { events, error, clearEvents } = useWebSocket(WS_URL);
-useThemes();
+const { events, error } = useWebSocket(WS_URL);
+useTheme();
 
-const openBriefData = ref<any>(null);
-const openBrief = (brief: any) => { openBriefData.value = brief; };
+// Responsive: compact brief preview on phone-ish widths
+const isCompact = ref(false);
+function recomputeCompact() {
+  isCompact.value = window.matchMedia('(max-width: 1023px)').matches;
+}
+onMounted(() => {
+  recomputeCompact();
+  window.addEventListener('resize', recomputeCompact);
+});
+onUnmounted(() => window.removeEventListener('resize', recomputeCompact));
+
+// Brief reading view (push-nav on mobile)
+const readingBrief = ref<any>(null);
+
+async function onOpenFull(brief: any) {
+  readingBrief.value = brief;
+}
+
+async function onOpenPrior(b: { date: string; slug: string; title: string }) {
+  // load the prior brief body via /api/atlas/briefs file proxy
+  try {
+    const all = await fetch(`${API_BASE_URL}/api/atlas/briefs`).then(r => r.json());
+    const match = (all?.briefs || []).find((x: any) => x.date === b.date && x.slug === b.slug);
+    if (!match) return;
+    const html = await fetch(`${API_BASE_URL}/api/atlas/briefs/file?path=${encodeURIComponent(match.path)}`).then(r => r.text());
+    const body = html.match(/<article[^>]*class="content"[^>]*>([\s\S]*?)<\/article>/i)?.[1] || html;
+    readingBrief.value = { date: match.date, title: match.title, slug: match.slug, htmlBody: body };
+  } catch (err) {
+    console.error('[brief] open-prior failed', err);
+  }
+}
 </script>
 
 <style scoped>
-.atlas-shell {
-  display: grid;
-  grid-template-rows: 48px 32px minmax(0, 1fr) auto;
-  grid-template-columns: 340px minmax(0, 1fr) 320px;
-  grid-template-areas:
-    "top    top      top"
-    "nav    nav      nav"
-    "today  activity briefs"
-    "talk   talk     talk";
-  height: 100vh;
-  background: var(--theme-bg-secondary);
-  color: var(--theme-text-primary);
+.atlas-page {
+  min-height: 100vh;
+  background: var(--atlas-page-bg);
+  color: var(--atlas-text-primary);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
 
-.atlas-shell__topbar { grid-area: top; }
-.atlas-shell__nav    { grid-area: nav; }
-.atlas-shell__today  { grid-area: today; overflow: hidden; border-right: 1px solid var(--theme-border-primary); background: var(--theme-bg-secondary); }
-.atlas-shell__activity { grid-area: activity; overflow: hidden; background: var(--theme-bg-secondary); }
-.atlas-shell__briefs { grid-area: briefs; overflow: hidden; border-left: 1px solid var(--theme-border-primary); background: var(--theme-bg-primary); }
-.atlas-shell__talk   { grid-area: talk; }
-
-/* Section nav (jump anchors, not tabs) */
-.atlas-shell__nav {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 14px;
-  background: var(--theme-bg-primary);
-  border-bottom: 1px solid var(--theme-border-primary);
-  overflow-x: auto;
+.atlas-page__divider {
+  height: 1px;
+  background: var(--atlas-hairline);
+  margin: 0 48px;
 }
-.atlas-shell__nav a {
-  display: inline-flex;
-  align-items: center;
-  height: 22px;
-  padding: 0 10px;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  color: var(--theme-text-tertiary);
-  text-decoration: none;
-  border-radius: 999px;
-  transition: color 0.12s ease, background-color 0.12s ease;
-}
-.atlas-shell__nav a:hover { color: var(--theme-text-primary); background: var(--theme-hover-bg); }
-@media (min-width: 700px) {
-  .atlas-shell__nav { display: none; }
-  .atlas-shell {
-    grid-template-rows: 48px minmax(0, 1fr) auto;
-    grid-template-areas:
-      "top    top      top"
-      "today  activity briefs"
-      "talk   talk     talk";
-  }
+@media (max-width: 1023px) {
+  .atlas-page__divider { margin: 0 24px; }
 }
 
-/* Mobile: single column, panels stack, nav becomes anchors */
-@media (max-width: 699px) {
-  .atlas-shell {
-    height: auto;
-    min-height: 100vh;
-    grid-template-rows: 48px 32px auto auto auto auto;
+.atlas-page__grid {
+  display: grid;
+  grid-template-columns: 40fr 60fr;
+  gap: 32px;
+  padding: 32px 48px 64px;
+}
+@media (max-width: 1023px) {
+  .atlas-page__grid {
     grid-template-columns: 1fr;
-    grid-template-areas:
-      "top"
-      "nav"
-      "today"
-      "activity"
-      "briefs"
-      "talk";
-  }
-  .atlas-shell__nav { position: sticky; top: 48px; z-index: 30; }
-  .atlas-shell__today, .atlas-shell__activity, .atlas-shell__briefs {
-    overflow: visible;
-    border-right: none;
-    border-left: none;
-    border-bottom: 1px solid var(--theme-border-primary);
+    padding: 24px 24px 64px;
+    gap: 16px;
   }
 }
 
-.atlas-error {
+.atlas-page__left {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.atlas-page__right {
+  min-width: 0;
+}
+
+.atlas-page__stats-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+/* On mobile, brief comes BEFORE left column. Reorder. */
+@media (max-width: 1023px) {
+  .atlas-page__right { order: -1; }
+}
+
+.atlas-page__error {
   position: fixed;
-  bottom: 70px;
-  left: 14px;
+  bottom: 16px;
+  left: 16px;
   z-index: 60;
   padding: 8px 12px;
   font-size: 12px;
-  color: var(--theme-accent-error);
-  background: var(--theme-bg-primary);
-  border: 1px solid rgba(255, 69, 58, 0.40);
+  color: var(--atlas-red);
+  background: var(--atlas-card-bg);
+  border: 1px solid rgba(255, 59, 48, 0.40);
   border-radius: 8px;
 }
 </style>

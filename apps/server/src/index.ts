@@ -115,6 +115,77 @@ function stripTags(s: string): string {
   return s.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim();
 }
 
+let todaysBriefCache: { ts: number; data: any } | null = null;
+const TODAYS_BRIEF_TTL_MS = 60_000;
+
+async function getTodaysBrief(): Promise<any> {
+  if (todaysBriefCache && Date.now() - todaysBriefCache.ts < TODAYS_BRIEF_TTL_MS) {
+    return todaysBriefCache.data;
+  }
+
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const all = await getAtlasBriefs();
+  const todays = all.filter(b => b.date === today);
+
+  let data: any;
+  if (todays.length > 0) {
+    const primary = todays[0];
+    const earlier = todays.slice(1).map(b => ({ date: b.date, slug: b.slug, title: b.title }));
+    data = {
+      empty: false,
+      date: primary.date,
+      topic: primary.topic,
+      slug: primary.slug,
+      title: primary.title,
+      tldr: primary.tldr,
+      htmlBody: await extractBriefBody(primary.path),
+      recommendedAction: null, // future: parse a "## Recommended action" section
+      prompts: [],             // future: parse copyable prompt blocks
+      hasMultipleToday: todays.length > 1,
+      earlierToday: earlier,
+    };
+  } else {
+    const latest = all[0];
+    data = {
+      empty: true,
+      message: 'No brief today.',
+      latestPriorBrief: latest
+        ? {
+            date: latest.date,
+            slug: latest.slug,
+            title: latest.title,
+            topic: latest.topic,
+            tldr: latest.tldr,
+            htmlBody: await extractBriefBody(latest.path),
+          }
+        : null,
+    };
+  }
+
+  todaysBriefCache = { ts: Date.now(), data };
+  return data;
+}
+
+async function extractBriefBody(path: string): Promise<string> {
+  try {
+    const html = await Bun.file(path).text();
+    // Pull just the <article class="content">…</article> if present;
+    // otherwise fall back to <div class="wrap">…</div> minus the brief-head.
+    const article = html.match(/<article[^>]*class="content"[^>]*>([\s\S]*?)<\/article>/i);
+    if (article) return article[1];
+    const wrap = html.match(/<div[^>]*class="wrap"[^>]*>([\s\S]*?)<\/div>\s*<\/body>/i);
+    if (wrap) {
+      // strip the brief-head block if it exists, since we render title separately
+      return wrap[1].replace(/<header[^>]*class="brief-head"[^>]*>[\s\S]*?<\/header>/i, '');
+    }
+    // last-resort: return the body content
+    const body = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+    return body ? body[1] : html;
+  } catch (err) {
+    return `<p>Brief content unavailable: ${(err as Error).message}</p>`;
+  }
+}
+
 // Dynamic-import the bot-tg router (it's ESM JS). routeMessage classifies
 // the prompt, backendFor maps tier → CLI backend.
 async function atlasTalk(message: string): Promise<{ reply: string; decision: any }> {
@@ -465,6 +536,23 @@ const server = Bun.serve({
     if (url.pathname === '/api/atlas/briefs' && req.method === 'GET') {
       const briefs = await getAtlasBriefs();
       return new Response(JSON.stringify({ briefs }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // GET /api/atlas/brief/today - hero brief w/ inline body content
+    if (url.pathname === '/api/atlas/brief/today' && req.method === 'GET') {
+      const data = await getTodaysBrief();
+      return new Response(JSON.stringify(data), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // GET /api/atlas/events/recent - HTTP fallback for Live Activity initial load
+    if (url.pathname === '/api/atlas/events/recent' && req.method === 'GET') {
+      const limit = parseInt(url.searchParams.get('limit') || '20');
+      const events = getRecentEvents(limit);
+      return new Response(JSON.stringify({ events }), {
         headers: { ...headers, 'Content-Type': 'application/json' }
       });
     }
