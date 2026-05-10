@@ -1,8 +1,14 @@
 <template>
-  <div class="talk-view">
-    <div ref="scrollEl" class="talk-thread">
+  <div class="talk-dock" :class="{ 'is-expanded': expanded }">
+    <button class="talk-dock__handle" @click="toggle" :aria-expanded="expanded" :title="expanded ? 'Collapse' : 'Expand'">
+      <span class="talk-dock__caret">{{ expanded ? '▾' : '▴' }}</span>
+      <span class="talk-dock__label">Atlas</span>
+      <span v-if="lastReply" class="talk-dock__hint">{{ lastReply }}</span>
+    </button>
+
+    <div v-if="expanded" ref="scrollEl" class="talk-dock__thread">
       <div v-if="!messages.length" class="talk-empty">
-        <h3>What can Atlas help with?</h3>
+        <span class="talk-empty__lead">What can Atlas help with?</span>
         <div class="talk-empty__suggestions">
           <button
             v-for="s in suggestions"
@@ -20,43 +26,42 @@
         class="talk-msg"
         :class="`is-${msg.role}`"
       >
-        <div class="talk-bubble">
-          {{ msg.text }}
-        </div>
+        <div class="talk-bubble">{{ msg.text }}</div>
         <div v-if="msg.role === 'atlas' && msg.decision" class="talk-meta">
           @{{ msg.decision.agent }} · {{ msg.decision.project }} · {{ msg.decision.model }}
         </div>
         <div v-else-if="msg.role === 'error'" class="talk-meta is-error">{{ msg.detail || 'error' }}</div>
       </div>
 
-      <div v-if="sending" class="talk-msg is-atlas is-pending">
+      <div v-if="sending" class="talk-msg is-atlas">
         <div class="talk-bubble talk-bubble--pending">
           <span class="talk-dot"></span><span class="talk-dot"></span><span class="talk-dot"></span>
         </div>
       </div>
     </div>
 
-    <form class="talk-composer" @submit.prevent="onSubmit">
+    <form class="talk-dock__composer" @submit.prevent="onSubmit">
       <textarea
         ref="inputEl"
         v-model="draft"
-        class="talk-composer__input"
-        placeholder="Talk to Atlas…"
+        class="talk-dock__input"
+        :placeholder="expanded ? 'Talk to Atlas…' : 'Talk to Atlas… (click to expand)'"
         rows="1"
         @keydown="onKeyDown"
+        @focus="expanded = true"
         :disabled="sending"
       ></textarea>
       <button
         type="submit"
         class="btn btn--primary"
         :disabled="!draft.trim() || sending"
-      >{{ sending ? 'Routing…' : 'Send' }}</button>
+      >{{ sending ? '…' : 'Send' }}</button>
     </form>
   </div>
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, ref } from 'vue';
+import { nextTick, onMounted, ref, watch } from 'vue';
 import { API_BASE_URL } from '../config';
 
 interface Msg {
@@ -68,6 +73,7 @@ interface Msg {
 }
 
 const STORAGE_KEY = 'atlas.talkThread';
+const EXPAND_KEY = 'atlas.talkExpanded';
 const MAX_MESSAGES = 100;
 
 const suggestions = [
@@ -79,8 +85,17 @@ const suggestions = [
 const messages = ref<Msg[]>(loadThread());
 const draft = ref('');
 const sending = ref(false);
+const expanded = ref<boolean>(loadExpanded());
 const scrollEl = ref<HTMLDivElement | null>(null);
 const inputEl = ref<HTMLTextAreaElement | null>(null);
+
+const lastReply = ref<string>(deriveHint());
+
+function deriveHint(): string {
+  const last = [...messages.value].reverse().find(m => m.role === 'atlas');
+  if (!last) return '';
+  return last.text.slice(0, 80).replace(/\n+/g, ' ') + (last.text.length > 80 ? '…' : '');
+}
 
 function loadThread(): Msg[] {
   try {
@@ -89,6 +104,9 @@ function loadThread(): Msg[] {
   } catch {/* ignore */}
   return [];
 }
+function loadExpanded(): boolean {
+  try { return localStorage.getItem(EXPAND_KEY) === '1'; } catch { return false; }
+}
 
 function persist() {
   try {
@@ -96,16 +114,22 @@ function persist() {
   } catch {/* ignore */}
 }
 
+watch(expanded, (v) => {
+  try { localStorage.setItem(EXPAND_KEY, v ? '1' : '0'); } catch {/* ignore */}
+  if (v) scrollToBottom();
+});
+
+function toggle() { expanded.value = !expanded.value; }
+
 async function scrollToBottom() {
   await nextTick();
-  if (scrollEl.value) {
-    scrollEl.value.scrollTop = scrollEl.value.scrollHeight;
-  }
+  if (scrollEl.value) scrollEl.value.scrollTop = scrollEl.value.scrollHeight;
 }
 
 async function sendMessage(text: string) {
   const trimmed = text.trim();
   if (!trimmed || sending.value) return;
+  expanded.value = true;
   messages.value.push({ role: 'user', text: trimmed, ts: Date.now() });
   persist();
   scrollToBottom();
@@ -121,6 +145,7 @@ async function sendMessage(text: string) {
       messages.value.push({ role: 'error', text: 'Atlas could not reply.', detail: data?.error || `HTTP ${res.status}`, ts: Date.now() });
     } else {
       messages.value.push({ role: 'atlas', text: data.reply || '(no reply)', decision: data.decision, ts: Date.now() });
+      lastReply.value = deriveHint();
     }
   } catch (err: any) {
     messages.value.push({ role: 'error', text: 'Network error reaching Atlas.', detail: err?.message, ts: Date.now() });
@@ -144,64 +169,83 @@ function onKeyDown(e: KeyboardEvent) {
   }
 }
 
-onMounted(() => { scrollToBottom(); });
+onMounted(() => { if (expanded.value) scrollToBottom(); });
 </script>
 
 <style scoped>
-.talk-view {
+.talk-dock {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  background: var(--theme-bg-secondary);
+  background: var(--theme-bg-primary);
+  border-top: 1px solid var(--theme-border-primary);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  max-height: 320px;
+}
+.talk-dock.is-expanded { max-height: 320px; }
+
+.talk-dock__handle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 12px;
+  background: var(--theme-bg-secondary);
+  border: none;
+  border-bottom: 1px solid var(--theme-border-primary);
+  color: var(--theme-text-tertiary);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+.talk-dock__caret { font-size: 9px; color: var(--theme-text-tertiary); }
+.talk-dock__label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--theme-text-primary);
+  letter-spacing: -0.005em;
+}
+.talk-dock__hint {
+  font-size: 11px;
+  color: var(--theme-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  font-weight: 400;
 }
 
-.talk-thread {
-  flex: 1;
+.talk-dock__thread {
   overflow-y: auto;
-  padding: 24px 20px;
+  padding: 8px 14px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 6px;
+  max-height: 240px;
 }
-@media (max-width: 699px) { .talk-thread { padding: 16px 12px 88px; } }
 
 .talk-empty {
+  margin: 12px auto;
+  text-align: center;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  text-align: center;
-  margin: auto;
-  gap: 14px;
-  color: var(--theme-text-tertiary);
-}
-.talk-empty h3 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 500;
-  color: var(--theme-text-secondary);
-}
-.talk-empty__suggestions {
-  display: flex;
-  flex-wrap: wrap;
   gap: 8px;
-  justify-content: center;
 }
+.talk-empty__lead { font-size: 13px; color: var(--theme-text-secondary); font-weight: 500; }
+.talk-empty__suggestions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
 .atb-pill {
   display: inline-flex;
   align-items: center;
-  height: 30px;
-  padding: 0 14px;
-  font-size: 12px;
+  height: 24px;
+  padding: 0 12px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--theme-text-secondary);
-  background: var(--theme-bg-primary);
+  background: var(--theme-bg-secondary);
   border: 1px solid var(--theme-border-primary);
   border-radius: 999px;
   cursor: pointer;
   font-family: inherit;
-  transition: background-color 0.12s ease, color 0.12s ease;
 }
 .atb-pill:hover:not(:disabled) { background: var(--theme-bg-tertiary); color: var(--theme-text-primary); }
 .atb-pill:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -209,25 +253,18 @@ onMounted(() => { scrollToBottom(); });
 .talk-msg {
   display: flex;
   flex-direction: column;
-  max-width: 70%;
-  gap: 4px;
+  gap: 2px;
+  max-width: 80%;
 }
-.talk-msg.is-user {
-  align-self: flex-end;
-  align-items: flex-end;
-}
-.talk-msg.is-atlas, .talk-msg.is-error {
-  align-self: flex-start;
-}
-@media (max-width: 699px) {
-  .talk-msg { max-width: 88%; }
-}
+.talk-msg.is-user { align-self: flex-end; align-items: flex-end; }
+.talk-msg.is-atlas, .talk-msg.is-error { align-self: flex-start; }
 
 .talk-bubble {
-  padding: 10px 14px;
-  font-size: 15px;
-  line-height: 1.45;
-  border-radius: 18px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.35;
+  border-radius: 14px;
   white-space: pre-wrap;
   word-wrap: break-word;
 }
@@ -237,7 +274,7 @@ onMounted(() => { scrollToBottom(); });
   border-bottom-right-radius: 4px;
 }
 .is-atlas .talk-bubble {
-  background: var(--theme-bg-primary);
+  background: var(--theme-bg-secondary);
   color: var(--theme-text-primary);
   border: 1px solid var(--theme-border-primary);
   border-bottom-left-radius: 4px;
@@ -247,7 +284,7 @@ onMounted(() => { scrollToBottom(); });
   color: var(--theme-accent-error);
   border: 1px solid rgba(255, 69, 58, 0.30);
   border-bottom-left-radius: 4px;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .talk-bubble--pending {
@@ -270,53 +307,51 @@ onMounted(() => { scrollToBottom(); });
 }
 
 .talk-meta {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--theme-text-tertiary);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 }
 .talk-meta.is-error { color: var(--theme-accent-error); }
 
-.talk-composer {
+.talk-dock__composer {
   display: flex;
   gap: 8px;
-  padding: 10px 14px;
-  background: var(--theme-bg-primary);
+  padding: 8px 12px;
   border-top: 1px solid var(--theme-border-primary);
+  background: var(--theme-bg-primary);
 }
-@media (max-width: 699px) {
-  .talk-composer { padding: 8px 10px calc(60px + env(safe-area-inset-bottom)); }
-}
-
-.talk-composer__input {
+.talk-dock__input {
   flex: 1;
-  min-height: 38px;
-  max-height: 200px;
-  padding: 9px 12px;
-  font-size: 14px;
+  min-height: 32px;
+  max-height: 120px;
+  padding: 6px 10px;
+  font-size: 13px;
   font-family: inherit;
+  font-weight: 400;
   color: var(--theme-text-primary);
   background: var(--theme-bg-secondary);
   border: 1px solid var(--theme-border-primary);
-  border-radius: 18px;
+  border-radius: 14px;
   outline: none;
   resize: none;
-  line-height: 1.4;
+  line-height: 1.35;
 }
-.talk-composer__input:focus {
+.talk-dock__input::placeholder { color: var(--theme-text-tertiary); }
+.talk-dock__input:focus {
   border-color: var(--theme-primary);
   box-shadow: 0 0 0 3px var(--theme-primary-light);
 }
-.talk-composer__input:disabled { opacity: 0.6; }
+.talk-dock__input:disabled { opacity: 0.6; }
 
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 8px 16px;
-  font-size: 13px;
+  padding: 6px 14px;
+  font-size: 12px;
   font-weight: 500;
   font-family: inherit;
-  border-radius: 18px;
+  border-radius: 14px;
   border: 1px solid transparent;
   cursor: pointer;
   transition: background-color 0.12s ease;

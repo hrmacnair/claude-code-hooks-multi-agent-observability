@@ -1,7 +1,7 @@
 <template>
-  <div class="briefs-view">
-    <header class="briefs-header">
-      <div class="briefs-filters">
+  <div class="briefs-panel">
+    <header class="briefs-panel__head">
+      <div class="briefs-panel__filters">
         <button
           v-for="topic in topics"
           :key="topic"
@@ -10,42 +10,32 @@
           @click="activeTopic = topic"
         >{{ topic === 'all' ? 'All' : capitalize(topic) }}</button>
       </div>
-      <div class="briefs-search">
-        <input
-          type="text"
-          v-model="search"
-          placeholder="Search briefs…"
-          class="briefs-search__input"
-        />
-      </div>
+      <input
+        type="text"
+        v-model="search"
+        placeholder="Search briefs"
+        class="briefs-panel__search"
+      />
     </header>
 
-    <div class="briefs-body">
+    <div class="briefs-panel__body">
       <ul v-if="filtered.length" class="briefs-list">
         <li
           v-for="b in filtered"
           :key="b.path"
           class="briefs-list__row"
-          :class="{ 'is-active': selected?.path === b.path }"
-          @click="selected = b"
+          @click="$emit('open-brief', b)"
         >
-          <span class="briefs-list__date">{{ b.date }}</span>
-          <span class="briefs-list__topic">{{ b.topic }}</span>
-          <span class="briefs-list__title">{{ b.title }}</span>
-          <span class="briefs-list__tldr">{{ b.tldr }}</span>
+          <div class="briefs-list__meta">
+            <span class="briefs-list__date">{{ b.date }}</span>
+            <span class="briefs-list__topic">{{ b.topic }}</span>
+          </div>
+          <div class="briefs-list__title">{{ b.title }}</div>
+          <div v-if="b.tldr" class="briefs-list__tldr">{{ b.tldr }}</div>
         </li>
       </ul>
       <div v-else-if="loading" class="briefs-empty">Loading briefs…</div>
       <div v-else class="briefs-empty">No briefs match.</div>
-
-      <div v-if="selected" class="briefs-detail">
-        <div class="briefs-detail__bar">
-          <span class="briefs-detail__meta">{{ selected.date }} · {{ selected.topic }}</span>
-          <a class="briefs-detail__open" :href="proxyUrl(selected)" target="_blank" rel="noopener">Open in tab ↗</a>
-          <button class="briefs-detail__close" @click="selected = null" aria-label="Close">✕</button>
-        </div>
-        <iframe class="briefs-detail__iframe" :src="proxyUrl(selected)" :title="selected.title"></iframe>
-      </div>
     </div>
   </div>
 </template>
@@ -54,11 +44,12 @@
 import { computed, onMounted, ref } from 'vue';
 import { API_BASE_URL } from '../config';
 
+defineEmits<{ (e: 'open-brief', brief: any): void }>();
+
 const briefs = ref<any[]>([]);
 const loading = ref(false);
 const search = ref('');
 const activeTopic = ref<string>('all');
-const selected = ref<any>(null);
 
 const topics = computed(() => {
   const set = new Set<string>(['all']);
@@ -75,13 +66,7 @@ const filtered = computed(() => {
   });
 });
 
-function proxyUrl(b: any): string {
-  return `${API_BASE_URL}/api/atlas/briefs/file?path=${encodeURIComponent(b.path)}`;
-}
-
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
+function capitalize(s: string): string { return s.charAt(0).toUpperCase() + s.slice(1); }
 
 onMounted(async () => {
   loading.value = true;
@@ -100,38 +85,34 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.briefs-view {
+.briefs-panel {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-height: 0;
   overflow: hidden;
-  background: var(--theme-bg-secondary);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
 
-.briefs-header {
+.briefs-panel__head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 20px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
   background: var(--theme-bg-primary);
   border-bottom: 1px solid var(--theme-border-primary);
 }
-@media (max-width: 699px) {
-  .briefs-header { padding: 10px 12px; flex-direction: column; align-items: stretch; gap: 8px; }
-}
 
-.briefs-filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
+.briefs-panel__filters { display: flex; flex-wrap: wrap; gap: 4px; }
 .atb-pill {
   display: inline-flex;
   align-items: center;
-  height: 26px;
-  padding: 0 12px;
-  font-size: 12px;
+  height: 22px;
+  padding: 0 10px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--theme-text-secondary);
   background: var(--theme-bg-secondary);
@@ -139,150 +120,92 @@ onMounted(async () => {
   border-radius: 999px;
   cursor: pointer;
   font-family: inherit;
-  transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
 .atb-pill:hover { background: var(--theme-bg-tertiary); color: var(--theme-text-primary); }
 .atb-pill.is-on {
   background: var(--theme-primary-light);
   color: var(--theme-primary);
-  border-color: rgba(10, 132, 255, 0.35);
+  border-color: rgba(10,132,255,0.35);
 }
 
-.briefs-search { flex: 1 1 220px; }
-.briefs-search__input {
+.briefs-panel__search {
   width: 100%;
-  padding: 7px 12px;
-  font-size: 12px;
+  padding: 5px 10px;
+  font-size: 11.5px;
   font-family: inherit;
-  background: var(--theme-bg-secondary);
+  font-weight: 400;
   color: var(--theme-text-primary);
+  background: var(--theme-bg-secondary);
   border: 1px solid var(--theme-border-primary);
-  border-radius: 8px;
+  border-radius: 6px;
   outline: none;
 }
-.briefs-search__input:focus {
+.briefs-panel__search:focus {
   border-color: var(--theme-primary);
   box-shadow: 0 0 0 3px var(--theme-primary-light);
 }
 
-.briefs-body {
+.briefs-panel__body {
   flex: 1;
-  display: grid;
-  grid-template-columns: minmax(0, 360px) 1fr;
-  gap: 0;
-  overflow: hidden;
-}
-@media (max-width: 899px) {
-  .briefs-body { grid-template-columns: 1fr; }
-}
-
-.briefs-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
+  min-height: 0;
   overflow-y: auto;
   background: var(--theme-bg-primary);
-  border-right: 1px solid var(--theme-border-primary);
 }
+
+.briefs-list { margin: 0; padding: 0; list-style: none; }
 .briefs-list__row {
   display: grid;
-  grid-template-columns: 90px 80px 1fr;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto auto;
   align-items: baseline;
-  gap: 10px;
-  padding: 12px 14px;
-  font-size: 13px;
+  row-gap: 1px;
+  column-gap: 8px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--theme-border-primary);
   cursor: pointer;
   transition: background-color 0.12s ease;
 }
 .briefs-list__row:hover { background: var(--theme-hover-bg); }
-.briefs-list__row.is-active { background: var(--theme-primary-light); }
+.briefs-list__meta {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--theme-text-tertiary);
+}
 .briefs-list__date {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-  font-size: 11px;
-  color: var(--theme-text-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 .briefs-list__topic {
-  font-size: 10px;
-  letter-spacing: 0.05em;
   text-transform: uppercase;
-  font-weight: 600;
-  color: var(--theme-text-tertiary);
+  letter-spacing: 0.05em;
+  font-weight: 500;
 }
 .briefs-list__title {
-  grid-column: 3;
+  grid-column: 1 / -1;
+  font-size: 12.5px;
   font-weight: 500;
   color: var(--theme-text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  letter-spacing: -0.005em;
+  line-height: 1.3;
 }
 .briefs-list__tldr {
   grid-column: 1 / -1;
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 400;
   color: var(--theme-text-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.35;
 }
 
 .briefs-empty {
-  padding: 24px;
-  font-size: 13px;
-  color: var(--theme-text-tertiary);
-}
-
-.briefs-detail {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--theme-bg-primary);
-}
-@media (max-width: 899px) {
-  .briefs-detail {
-    position: fixed;
-    inset: 0;
-    z-index: 50;
-  }
-}
-.briefs-detail__bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--theme-border-primary);
-}
-.briefs-detail__meta {
+  padding: 20px 14px;
   font-size: 12px;
   color: var(--theme-text-tertiary);
-  font-variant-numeric: tabular-nums;
-  flex: 1;
-}
-.briefs-detail__open {
-  font-size: 12px;
-  color: var(--theme-primary);
-  text-decoration: none;
-}
-.briefs-detail__open:hover { text-decoration: underline; }
-.briefs-detail__close {
-  width: 26px;
-  height: 26px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: 1px solid var(--theme-border-primary);
-  border-radius: 6px;
-  color: var(--theme-text-secondary);
-  cursor: pointer;
-  font-size: 11px;
-}
-.briefs-detail__close:hover { background: var(--theme-hover-bg); }
-
-.briefs-detail__iframe {
-  flex: 1;
-  width: 100%;
-  border: none;
-  background: var(--theme-bg-primary);
 }
 </style>

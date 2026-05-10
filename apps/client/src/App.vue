@@ -1,94 +1,144 @@
 <template>
   <div class="atlas-shell">
-    <AtlasTopBar />
-    <AtlasTabBar v-model="activeTab" />
+    <AtlasTopBar class="atlas-shell__topbar" />
 
-    <main class="atlas-main">
-      <KeepAlive>
-        <component
-          :is="viewComponent"
-          :events="events"
-          @clear-events="clearEvents"
-        />
-      </KeepAlive>
-    </main>
+    <nav class="atlas-shell__nav" aria-label="Atlas sections">
+      <a href="#today">Today</a>
+      <a href="#activity">Activity</a>
+      <a href="#briefs">Briefs</a>
+      <a href="#talk">Talk</a>
+    </nav>
 
-    <ThemeManager :is-open="false" @close="() => {}" />
+    <section id="today" class="atlas-shell__today">
+      <TodayPanel :events="events" />
+    </section>
+
+    <section id="activity" class="atlas-shell__activity">
+      <ActivityPanel :events="events" @clear-events="clearEvents" />
+    </section>
+
+    <section id="briefs" class="atlas-shell__briefs">
+      <BriefsPanel @open-brief="openBrief" />
+    </section>
+
+    <section id="talk" class="atlas-shell__talk">
+      <TalkDock />
+    </section>
+
+    <BriefViewerModal
+      v-if="openBriefData"
+      :brief="openBriefData"
+      @close="openBriefData = null"
+    />
 
     <div v-if="error" class="atlas-error">{{ error }}</div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { ref } from 'vue';
 import { useWebSocket } from './composables/useWebSocket';
 import { useThemes } from './composables/useThemes';
 import AtlasTopBar from './components/AtlasTopBar.vue';
-import AtlasTabBar from './components/AtlasTabBar.vue';
-import ThemeManager from './components/ThemeManager.vue';
-import TodayView from './views/TodayView.vue';
-import ActivityView from './views/ActivityView.vue';
-import BriefsView from './views/BriefsView.vue';
-import TalkView from './views/TalkView.vue';
+import TodayPanel from './views/TodayView.vue';
+import ActivityPanel from './views/ActivityView.vue';
+import BriefsPanel from './views/BriefsView.vue';
+import TalkDock from './views/TalkView.vue';
+import BriefViewerModal from './components/BriefViewerModal.vue';
 import { WS_URL } from './config';
 
-// WebSocket — kept here so events stay live across tab switches
 const { events, error, clearEvents } = useWebSocket(WS_URL);
-
-// Theme system (defaults to dark-only per useThemes init)
 useThemes();
 
-const TAB_STORAGE = 'atlas.activeTab';
-const validTabs = ['today', 'activity', 'briefs', 'talk'] as const;
-type Tab = typeof validTabs[number];
-
-const initialTab: Tab = (() => {
-  // ?tab=foo wins, then localStorage, then default
-  try {
-    const qs = new URLSearchParams(window.location.search).get('tab');
-    if (qs && validTabs.includes(qs as Tab)) return qs as Tab;
-  } catch {/* ignore */}
-  const saved = localStorage.getItem(TAB_STORAGE);
-  return validTabs.includes(saved as Tab) ? (saved as Tab) : 'today';
-})();
-
-const activeTab = ref<Tab>(initialTab);
-
-watch(activeTab, (v) => {
-  try { localStorage.setItem(TAB_STORAGE, v); } catch {/* ignore */}
-});
-
-const viewComponent = computed(() => {
-  switch (activeTab.value) {
-    case 'today':    return TodayView;
-    case 'activity': return ActivityView;
-    case 'briefs':   return BriefsView;
-    case 'talk':     return TalkView;
-    default:         return TodayView;
-  }
-});
+const openBriefData = ref<any>(null);
+const openBrief = (brief: any) => { openBriefData.value = brief; };
 </script>
 
 <style scoped>
 .atlas-shell {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: 48px 32px minmax(0, 1fr) auto;
+  grid-template-columns: 340px minmax(0, 1fr) 320px;
+  grid-template-areas:
+    "top    top      top"
+    "nav    nav      nav"
+    "today  activity briefs"
+    "talk   talk     talk";
   height: 100vh;
   background: var(--theme-bg-secondary);
   color: var(--theme-text-primary);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
 
-.atlas-main {
-  flex: 1;
+.atlas-shell__topbar { grid-area: top; }
+.atlas-shell__nav    { grid-area: nav; }
+.atlas-shell__today  { grid-area: today; overflow: hidden; border-right: 1px solid var(--theme-border-primary); background: var(--theme-bg-secondary); }
+.atlas-shell__activity { grid-area: activity; overflow: hidden; background: var(--theme-bg-secondary); }
+.atlas-shell__briefs { grid-area: briefs; overflow: hidden; border-left: 1px solid var(--theme-border-primary); background: var(--theme-bg-primary); }
+.atlas-shell__talk   { grid-area: talk; }
+
+/* Section nav (jump anchors, not tabs) */
+.atlas-shell__nav {
   display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  background: var(--theme-bg-primary);
+  border-bottom: 1px solid var(--theme-border-primary);
+  overflow-x: auto;
+}
+.atlas-shell__nav a {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--theme-text-tertiary);
+  text-decoration: none;
+  border-radius: 999px;
+  transition: color 0.12s ease, background-color 0.12s ease;
+}
+.atlas-shell__nav a:hover { color: var(--theme-text-primary); background: var(--theme-hover-bg); }
+@media (min-width: 700px) {
+  .atlas-shell__nav { display: none; }
+  .atlas-shell {
+    grid-template-rows: 48px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "top    top      top"
+      "today  activity briefs"
+      "talk   talk     talk";
+  }
+}
+
+/* Mobile: single column, panels stack, nav becomes anchors */
+@media (max-width: 699px) {
+  .atlas-shell {
+    height: auto;
+    min-height: 100vh;
+    grid-template-rows: 48px 32px auto auto auto auto;
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "top"
+      "nav"
+      "today"
+      "activity"
+      "briefs"
+      "talk";
+  }
+  .atlas-shell__nav { position: sticky; top: 48px; z-index: 30; }
+  .atlas-shell__today, .atlas-shell__activity, .atlas-shell__briefs {
+    overflow: visible;
+    border-right: none;
+    border-left: none;
+    border-bottom: 1px solid var(--theme-border-primary);
+  }
 }
 
 .atlas-error {
   position: fixed;
-  bottom: 14px;
+  bottom: 70px;
   left: 14px;
   z-index: 60;
   padding: 8px 12px;

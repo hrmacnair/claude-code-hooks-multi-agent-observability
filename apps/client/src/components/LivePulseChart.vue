@@ -21,20 +21,6 @@
         </span>
       </div>
 
-      <div class="atlas-segctrl" role="tablist" aria-label="Time range selector">
-        <button
-          v-for="(range, index) in timeRanges"
-          :key="range"
-          @click="setTimeRange(range)"
-          @keydown="handleTimeRangeKeyDown($event, index)"
-          class="atlas-segctrl__btn"
-          :class="{ 'is-active': timeRange === range }"
-          role="tab"
-          :aria-selected="timeRange === range"
-          :aria-label="`Show ${range === '1m' ? '1 minute' : range === '3m' ? '3 minutes' : range === '5m' ? '5 minutes' : '10 minutes'} of activity`"
-          :tabindex="timeRange === range ? 0 : -1"
-        >{{ range }}</button>
-      </div>
     </div>
     <div ref="chartContainer" class="relative">
       <canvas
@@ -73,6 +59,7 @@ const props = defineProps<{
     sessionId: string;
     eventType: string;
   };
+  timeRange?: TimeRange;
 }>();
 
 const emit = defineEmits<{
@@ -84,7 +71,7 @@ const emit = defineEmits<{
 const canvas = ref<HTMLCanvasElement>();
 const chartContainer = ref<HTMLDivElement>();
 const windowHeight = ref(typeof window !== 'undefined' ? window.innerHeight : 600);
-const chartHeight = computed(() => windowHeight.value <= 400 ? 210 : 96);
+const chartHeight = computed(() => windowHeight.value <= 400 ? 160 : 72);
 
 const timeRanges: TimeRange[] = ['1m', '3m', '5m', '10m'];
 
@@ -126,6 +113,11 @@ watch(allUniqueAgentIds, (agentIds) => {
 watch(timeRange, (range) => {
   emit('updateTimeRange', range);
 }, { immediate: true });
+
+// Mirror time range from parent when prop changes
+watch(() => props.timeRange, (range) => {
+  if (range && range !== timeRange.value) setTimeRange(range);
+});
 
 let renderer: ReturnType<typeof createChartRenderer> | null = null;
 let resizeObserver: ResizeObserver | null = null;
@@ -470,11 +462,11 @@ onUnmounted(() => {
 .atlas-pulse {
   background: var(--theme-bg-primary);
   border-bottom: 1px solid var(--theme-border-primary);
-  padding: 10px 20px 0;
+  padding: 4px 14px 0;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
 @media (max-width: 699px) {
-  .atlas-pulse { padding: 8px 12px 0; }
+  .atlas-pulse { padding: 4px 12px 0; }
 }
 
 .atlas-pulse__bar {

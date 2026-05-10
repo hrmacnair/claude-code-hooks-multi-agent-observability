@@ -96,16 +96,10 @@
       <span class="evt-card__sess-stripe" :class="gradientClass"></span>
 
       <div class="evt-card__body">
-        <!-- Top: hook label + tool + time -->
+        <!-- Line 1: tag, tool, app·session·model, time -->
         <div class="evt-card__top">
           <span class="evt-tag" :class="`evt-tag--${tone}`">{{ hookLabel }}</span>
           <span v-if="toolName" class="evt-tool">{{ toolName }}</span>
-          <span class="evt-card__spacer"></span>
-          <span class="evt-time">{{ formatTime(event.timestamp) }}</span>
-        </div>
-
-        <!-- Identity row: app · session · model -->
-        <div class="evt-card__id">
           <span class="evt-id-app" :style="{ color: appHexColor }">{{ event.source_app }}</span>
           <span class="meta-sep">·</span>
           <span class="evt-id-session">{{ sessionIdShort }}</span>
@@ -113,18 +107,14 @@
             <span class="meta-sep">·</span>
             <span class="evt-id-model">{{ formatModelName(event.model_name) }}</span>
           </template>
+          <span class="evt-card__spacer"></span>
+          <span class="evt-time">{{ formatTime(event.timestamp) }}</span>
         </div>
 
-        <!-- Detail line -->
-        <div v-if="toolInfo" class="evt-card__detail">
-          <span class="evt-detail-label">{{ toolInfo.tool }}</span>
-          <span v-if="toolInfo.detail" class="evt-detail-text">{{ toolInfo.detail }}</span>
-        </div>
-
-        <!-- Summary -->
-        <div v-if="event.summary" class="evt-card__summary">
-          <span class="evt-summary-label">Summary</span>
-          <span class="evt-summary-text">{{ event.summary }}</span>
+        <!-- Line 2: tool detail OR summary, truncated -->
+        <div v-if="lineTwo" class="evt-card__detail">
+          <span v-if="lineTwo.label" class="evt-detail-label">{{ lineTwo.label }}</span>
+          <span class="evt-detail-text">{{ lineTwo.text }}</span>
         </div>
 
         <!-- Expanded -->
@@ -207,6 +197,14 @@ const toolName = computed(() => {
   if (toolEvents.includes(eventType) && props.event.payload?.tool_name) {
     return props.event.payload.tool_name;
   }
+  return null;
+});
+
+const lineTwo = computed<{ label?: string; text: string } | null>(() => {
+  if (props.event.summary) return { label: '', text: props.event.summary };
+  const info = toolInfo.value;
+  if (info && info.detail) return { label: info.tool, text: info.detail };
+  if (info) return { label: '', text: info.tool };
   return null;
 });
 
@@ -396,10 +394,10 @@ const submitChoice = async (choice: string) => {
 .evt-card {
   position: relative;
   display: flex;
-  padding: 10px 12px 10px 14px;
+  padding: 5px 10px 5px 14px;
   background: var(--theme-bg-primary);
   border: 1px solid var(--theme-border-primary);
-  border-radius: 10px;
+  border-radius: 7px;
   cursor: pointer;
   transition: border-color 0.12s ease, background-color 0.12s ease;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
@@ -415,15 +413,15 @@ const submitChoice = async (choice: string) => {
   left: 0;
   top: 0;
   bottom: 0;
-  width: 3px;
-  border-radius: 10px 0 0 10px;
+  width: 2px;
+  border-radius: 7px 0 0 7px;
 }
 .evt-card__sess-stripe {
   position: absolute;
-  left: 3px;
+  left: 2px;
   top: 0;
   bottom: 0;
-  width: 1.5px;
+  width: 1px;
   opacity: 0.55;
 }
 
@@ -431,32 +429,34 @@ const submitChoice = async (choice: string) => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-left: 6px;
+  gap: 2px;
+  margin-left: 4px;
   min-width: 0;
 }
 
 .evt-card__top {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 6px;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 .evt-card__spacer { flex: 1 1 auto; }
 
 .evt-tag {
   display: inline-flex;
   align-items: center;
-  height: 20px;
-  padding: 0 8px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
+  height: 18px;
+  padding: 0 7px;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
   border-radius: 4px;
   background: var(--theme-bg-tertiary);
   color: var(--theme-text-secondary);
   border: 1px solid var(--theme-border-primary);
   white-space: nowrap;
+  flex: none;
 }
 .evt-tag--success { color: var(--theme-accent-success); border-color: rgba(48, 209, 88, 0.35); background: rgba(48, 209, 88, 0.10); }
 .evt-tag--error   { color: var(--theme-accent-error);   border-color: rgba(255, 69, 58, 0.40); background: rgba(255, 69, 58, 0.10); }
@@ -466,63 +466,68 @@ const submitChoice = async (choice: string) => {
 .evt-tool {
   display: inline-flex;
   align-items: center;
-  height: 20px;
-  padding: 0 8px;
+  height: 18px;
+  padding: 0 6px;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-  font-size: 11px;
-  font-weight: 500;
+  font-size: 10.5px;
+  font-weight: 400;
   color: var(--theme-text-primary);
   background: var(--theme-bg-secondary);
   border: 1px solid var(--theme-border-primary);
   border-radius: 4px;
+  flex: none;
 }
 
 .evt-time {
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--theme-text-tertiary);
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.01em;
+  letter-spacing: -0.003em;
   white-space: nowrap;
+  flex: none;
 }
 
-.evt-card__id {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--theme-text-tertiary);
-  flex-wrap: wrap;
-}
 .evt-id-app {
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 500;
   letter-spacing: -0.005em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
 }
 .evt-id-session,
 .evt-id-model {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-  font-size: 11px;
+  font-size: 10.5px;
+  color: var(--theme-text-tertiary);
+  font-weight: 400;
+  white-space: nowrap;
 }
-.meta-sep { color: var(--theme-text-quaternary); }
+.meta-sep { color: var(--theme-text-quaternary); font-size: 10.5px; }
 
 .evt-card__detail {
   display: flex;
   align-items: baseline;
-  gap: 8px;
-  font-size: 12px;
+  gap: 6px;
+  font-size: 11.5px;
   color: var(--theme-text-secondary);
   min-width: 0;
+  overflow: hidden;
 }
 .evt-detail-label {
   font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  font-weight: 500;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--theme-text-tertiary);
   white-space: nowrap;
+  flex: none;
 }
 .evt-detail-text {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-  font-size: 12px;
+  font-size: 11.5px;
+  font-weight: 400;
   color: var(--theme-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -531,37 +536,13 @@ const submitChoice = async (choice: string) => {
   flex: 1;
 }
 
-.evt-card__summary {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--theme-text-primary);
-  padding-top: 4px;
-  border-top: 1px solid var(--theme-border-primary);
-  margin-top: 2px;
-}
-.evt-summary-label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--theme-text-tertiary);
-  white-space: nowrap;
-}
-.evt-summary-text {
-  font-size: 12px;
-  color: var(--theme-text-primary);
-  line-height: 1.4;
-}
-
 .evt-card__expanded {
-  margin-top: 8px;
-  padding-top: 10px;
+  margin-top: 6px;
+  padding-top: 8px;
   border-top: 1px solid var(--theme-border-primary);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 .evt-payload-head {
   display: flex;

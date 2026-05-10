@@ -108,33 +108,34 @@ const latestBriefUrl = computed(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 52px;
-  padding: 0 20px;
+  height: 48px;
+  padding: 0 16px;
 }
 @media (max-width: 699px) {
-  .atlas-topbar__inner { padding: 0 14px; height: 48px; gap: 8px; }
+  .atlas-topbar__inner { padding: 0 12px; gap: 8px; }
 }
 
 .atlas-topbar__brand {
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.016em;
   color: var(--theme-text-primary);
 }
 
 .atlas-topbar__sep {
   color: var(--theme-text-quaternary);
-  font-size: 13px;
+  font-size: 12px;
 }
 @media (max-width: 699px) {
   .atlas-topbar__sep, .atlas-topbar__metric, .atlas-topbar__health, .atlas-topbar__brief { display: none; }
 }
 
 .atlas-topbar__metric {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
   color: var(--theme-text-primary);
+  letter-spacing: -0.005em;
 }
 .atlas-topbar__metric-sub {
   margin-left: 4px;
@@ -146,7 +147,8 @@ const latestBriefUrl = computed(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 400;
   color: var(--theme-text-secondary);
   font-variant-numeric: tabular-nums;
 }
@@ -164,17 +166,19 @@ const latestBriefUrl = computed(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 400;
   color: var(--theme-text-secondary);
   text-decoration: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 340px;
+  max-width: 320px;
+  letter-spacing: -0.005em;
 }
 .atlas-topbar__brief:hover { color: var(--theme-primary); }
 .atlas-topbar__brief.is-empty { color: var(--theme-text-tertiary); }
-.atlas-topbar__brief-icon { color: var(--theme-accent-warning); }
+.atlas-topbar__brief-icon { color: var(--theme-accent-warning); font-size: 11px; }
 
 .atlas-topbar__spacer { flex: 1 1 auto; }
 
@@ -192,7 +196,7 @@ const latestBriefUrl = computed(() => {
 
 .atlas-topbar__popover {
   position: absolute;
-  top: 52px;
+  top: 48px;
   right: 14px;
   z-index: 50;
   min-width: 240px;
