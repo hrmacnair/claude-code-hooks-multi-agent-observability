@@ -17,6 +17,80 @@ initDatabase();
 // Store WebSocket clients
 const wsClients = new Set<any>();
 
+// --- Atlas dashboard stats ---
+// Cached briefly to avoid hammering codeburn / disk on every dashboard refresh.
+let atlasStatsCache: { ts: number; data: any } | null = null;
+const ATLAS_STATS_TTL_MS = 30_000;
+
+async function getAtlasStats() {
+  if (atlasStatsCache && Date.now() - atlasStatsCache.ts < ATLAS_STATS_TTL_MS) {
+    return atlasStatsCache.data;
+  }
+
+  const data: any = {
+    generated_at: new Date().toISOString(),
+    codeburn: { today: null, month: null, error: null },
+    caveman: { sessions: 0, error: null },
+    briefs: { recent: [], error: null },
+  };
+
+  // codeburn status: "Today  $19.14  191 calls    Month  $1467.41  6000 calls"
+  try {
+    const proc = Bun.spawn(['/Users/hrmacnair/.npm-global/bin/codeburn', 'status'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const out = await new Response(proc.stdout).text();
+    await proc.exited;
+    const todayMatch = out.match(/Today\s+\$([\d.]+)\s+(\d+)\s+calls/);
+    const monthMatch = out.match(/Month\s+\$([\d.]+)\s+(\d+)\s+calls/);
+    if (todayMatch) data.codeburn.today = { dollars: parseFloat(todayMatch[1]), calls: parseInt(todayMatch[2]) };
+    if (monthMatch) data.codeburn.month = { dollars: parseFloat(monthMatch[1]), calls: parseInt(monthMatch[2]) };
+  } catch (err: any) {
+    data.codeburn.error = err.message;
+  }
+
+  // caveman session count: jsonl files in ~/.claude/projects/-Users-hrmacnair-atlas/
+  try {
+    const projDir = '/Users/hrmacnair/.claude/projects/-Users-hrmacnair-atlas';
+    const proc = Bun.spawn(['bash', '-c', `ls "${projDir}" 2>/dev/null | grep -c '\\.jsonl$' || echo 0`], {
+      stdout: 'pipe',
+    });
+    const out = (await new Response(proc.stdout).text()).trim();
+    await proc.exited;
+    data.caveman.sessions = parseInt(out) || 0;
+  } catch (err: any) {
+    data.caveman.error = err.message;
+  }
+
+  // recent briefs: ~/atlas/briefs/static/index_*.html (newest 5 by mtime)
+  try {
+    const proc = Bun.spawn(
+      ['bash', '-c', `ls -t /Users/hrmacnair/atlas/briefs/static/*.html 2>/dev/null | head -5`],
+      { stdout: 'pipe' }
+    );
+    const out = await new Response(proc.stdout).text();
+    await proc.exited;
+    data.briefs.recent = out
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((path) => {
+        const filename = path.split('/').pop() || '';
+        return {
+          path,
+          filename,
+          url: `http://localhost:5174/${filename}`,
+        };
+      });
+  } catch (err: any) {
+    data.briefs.error = err.message;
+  }
+
+  atlasStatsCache = { ts: Date.now(), data };
+  return data;
+}
+
 // Helper function to send response to agent via WebSocket
 async function sendResponseToAgent(
   wsUrl: string,
@@ -172,6 +246,15 @@ const server = Bun.serve({
       const limit = parseInt(url.searchParams.get('limit') || '300');
       const events = getRecentEvents(limit);
       return new Response(JSON.stringify(events), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // GET /api/atlas/stats - Atlas-specific dashboard stats
+    // (codeburn token spend, caveman session count, recent auto-research briefs)
+    if (url.pathname === '/api/atlas/stats' && req.method === 'GET') {
+      const stats = await getAtlasStats();
+      return new Response(JSON.stringify(stats), {
         headers: { ...headers, 'Content-Type': 'application/json' }
       });
     }

@@ -1,69 +1,54 @@
 <template>
   <div class="flex-1 mobile:h-[50vh] overflow-hidden flex flex-col">
-    <!-- Fixed Header -->
-    <div class="px-3 py-4 mobile:py-2 bg-gradient-to-r from-[var(--theme-bg-primary)] to-[var(--theme-bg-secondary)] relative z-10" style="box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.3), 0 8px 25px -5px rgba(0, 0, 0, 0.2);">
-      <h2 class="text-2xl mobile:text-lg font-bold text-[var(--theme-primary)] text-center drop-shadow-sm">
-        Agent Event Stream
-      </h2>
+    <!-- Apple-minimal flat header -->
+    <div class="atlas-stream-header relative z-10">
+      <div class="atlas-stream-header__title-row">
+        <h2 class="atlas-stream-header__title">Event stream</h2>
+        <span class="atlas-stream-header__hint mobile:hidden" v-if="displayedAgentIds.length > 0">
+          tap an agent to open a swim lane
+        </span>
+      </div>
 
-      <!-- Agent/App Tags Row -->
-      <div v-if="displayedAgentIds.length > 0" class="mt-3 flex flex-wrap gap-2 mobile:gap-1.5 justify-start">
+      <!-- Agent pill row -->
+      <div v-if="displayedAgentIds.length > 0" class="atlas-pill-row">
         <button
           v-for="agentId in displayedAgentIds"
           :key="agentId"
           @click="emit('selectAgent', agentId)"
-          :class="[
-            'text-base mobile:text-sm font-bold px-3 mobile:px-2 py-1 rounded-full border-2 shadow-lg transition-all duration-200 hover:shadow-xl hover:scale-105 cursor-pointer',
-            isAgentActive(agentId)
-              ? 'text-[var(--theme-text-primary)] bg-[var(--theme-bg-tertiary)]'
-              : 'text-[var(--theme-text-tertiary)] bg-[var(--theme-bg-tertiary)] opacity-50 hover:opacity-75'
-          ]"
+          class="atlas-pill"
+          :class="{ 'is-inactive': !isAgentActive(agentId) }"
           :style="{
-            borderColor: getHexColorForApp(getAppNameFromAgentId(agentId)),
-            backgroundColor: getHexColorForApp(getAppNameFromAgentId(agentId)) + (isAgentActive(agentId) ? '33' : '1a')
+            '--pill-accent': getHexColorForApp(getAppNameFromAgentId(agentId))
           }"
-          :title="`${isAgentActive(agentId) ? 'Active: Click to add' : 'Sleeping: No recent events. Click to add'} ${agentId} to comparison lanes`"
+          :title="`${isAgentActive(agentId) ? 'Active' : 'Idle'} — ${agentId}`"
         >
-          <span class="mr-2">{{ isAgentActive(agentId) ? '✨' : '😴' }}</span>
-          <span class="font-mono text-sm">{{ agentId }}</span>
+          <span class="atlas-pill__dot"></span>
+          <span class="atlas-pill__label">{{ agentId }}</span>
         </button>
       </div>
 
       <!-- Search Bar -->
-      <div class="mt-3 mobile:mt-2 w-full">
-        <div class="flex items-center gap-2 mobile:gap-1">
-          <div class="relative flex-1">
-            <input
-              type="text"
-              :value="searchPattern"
-              @input="updateSearchPattern(($event.target as HTMLInputElement).value)"
-              placeholder="Search events (regex enabled)... e.g., 'tool.*error' or '^GET'"
-              :class="[
-                'w-full px-3 mobile:px-2 py-2 mobile:py-1.5 rounded-lg text-sm mobile:text-xs font-mono border-2 transition-all duration-200',
-                'bg-[var(--theme-bg-tertiary)] text-[var(--theme-text-primary)] placeholder-[var(--theme-text-quaternary)]',
-                'border-[var(--theme-border-primary)] focus:border-[var(--theme-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--theme-primary)]/20',
-                searchError ? 'border-[var(--theme-accent-error)]' : ''
-              ]"
-              aria-label="Search events with regex pattern"
-            />
-            <button
-              v-if="searchPattern"
-              @click="clearSearch"
-              class="absolute right-2 top-1/2 transform -translate-y-1/2 text-[var(--theme-text-tertiary)] hover:text-[var(--theme-primary)] transition-colors duration-200"
-              title="Clear search"
-              aria-label="Clear search"
-            >
-              ✕
-            </button>
-          </div>
+      <div class="atlas-search">
+        <div class="atlas-search__wrap">
+          <svg class="atlas-search__icon" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="4.5"/><path d="m12 12-2.5-2.5"/></svg>
+          <input
+            type="text"
+            :value="searchPattern"
+            @input="updateSearchPattern(($event.target as HTMLInputElement).value)"
+            placeholder="Search events — regex supported (e.g. ^GET)"
+            class="atlas-search__input"
+            :class="{ 'is-error': searchError }"
+            aria-label="Search events with regex pattern"
+          />
+          <button
+            v-if="searchPattern"
+            @click="clearSearch"
+            class="atlas-search__clear"
+            title="Clear search"
+            aria-label="Clear search"
+          >✕</button>
         </div>
-        <div
-          v-if="searchError"
-          class="mt-1.5 mobile:mt-1 px-2 py-1.5 mobile:py-1 bg-[var(--theme-accent-error)]/10 border border-[var(--theme-accent-error)] rounded-lg text-xs mobile:text-[11px] text-[var(--theme-accent-error)] font-semibold"
-          role="alert"
-        >
-          <span class="inline-block mr-1">⚠️</span> {{ searchError }}
-        </div>
+        <div v-if="searchError" class="atlas-search__error" role="alert">{{ searchError }}</div>
       </div>
     </div>
     
@@ -90,10 +75,9 @@
         />
       </TransitionGroup>
       
-      <div v-if="filteredEvents.length === 0" class="text-center py-8 mobile:py-6 text-[var(--theme-text-tertiary)]">
-        <div class="text-4xl mobile:text-3xl mb-3">🔳</div>
-        <p class="text-lg mobile:text-base font-semibold text-[var(--theme-primary)] mb-1.5">No events to display</p>
-        <p class="text-base mobile:text-sm">Events will appear here as they are received</p>
+      <div v-if="filteredEvents.length === 0" class="atlas-empty-state">
+        <p class="atlas-empty-state__title">No events</p>
+        <p class="atlas-empty-state__sub">Events stream in here as agents fire hooks.</p>
       </div>
     </div>
   </div>
@@ -196,21 +180,146 @@ watch(() => props.stickToBottom, (shouldStick) => {
 </script>
 
 <style scoped>
-.event-enter-active {
-  transition: all 0.3s ease;
+.event-enter-active,
+.event-leave-active { transition: all 0.22s ease; }
+.event-enter-from { opacity: 0; transform: translateY(-8px); }
+.event-leave-to { opacity: 0; transform: translateY(8px); }
+
+.atlas-stream-header {
+  background: var(--theme-bg-primary);
+  border-bottom: 1px solid var(--theme-border-primary);
+  padding: 14px 20px 12px;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+@media (max-width: 699px) {
+  .atlas-stream-header { padding: 10px 12px 8px; }
 }
 
-.event-enter-from {
-  opacity: 0;
-  transform: translateY(-20px);
+.atlas-stream-header__title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.atlas-stream-header__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--theme-text-primary);
+  letter-spacing: -0.005em;
+}
+.atlas-stream-header__hint {
+  font-size: 11px;
+  color: var(--theme-text-tertiary);
+  letter-spacing: 0.01em;
 }
 
-.event-leave-active {
-  transition: all 0.3s ease;
+.atlas-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
 }
 
-.event-leave-to {
-  opacity: 0;
-  transform: translateY(20px);
+.atlas-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 8px;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-weight: 500;
+  color: var(--theme-text-primary);
+  background: var(--theme-bg-secondary);
+  border: 1px solid var(--theme-border-primary);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.atlas-pill:hover {
+  background: var(--theme-bg-tertiary);
+  border-color: var(--theme-border-secondary);
+}
+.atlas-pill.is-inactive {
+  color: var(--theme-text-tertiary);
+  opacity: 0.6;
+}
+.atlas-pill__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--pill-accent, var(--theme-text-tertiary));
+  flex: none;
+}
+.atlas-pill.is-inactive .atlas-pill__dot { opacity: 0.5; }
+.atlas-pill__label { white-space: nowrap; }
+
+.atlas-search { margin-top: 10px; }
+.atlas-search__wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.atlas-search__icon {
+  position: absolute;
+  left: 10px;
+  color: var(--theme-text-tertiary);
+  pointer-events: none;
+}
+.atlas-search__input {
+  width: 100%;
+  padding: 7px 28px 7px 30px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  color: var(--theme-text-primary);
+  background: var(--theme-bg-secondary);
+  border: 1px solid var(--theme-border-primary);
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.12s ease, background-color 0.12s ease;
+}
+.atlas-search__input::placeholder { color: var(--theme-text-tertiary); }
+.atlas-search__input:focus {
+  background: var(--theme-bg-primary);
+  border-color: var(--theme-primary);
+  box-shadow: 0 0 0 3px var(--theme-primary-light);
+}
+.atlas-search__input.is-error { border-color: var(--theme-accent-error); }
+.atlas-search__clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--theme-text-tertiary);
+  cursor: pointer;
+  font-size: 11px;
+  border-radius: 4px;
+}
+.atlas-search__clear:hover { color: var(--theme-text-primary); background: var(--theme-hover-bg); }
+.atlas-search__error {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--theme-accent-error);
+}
+
+.atlas-empty-state {
+  padding: 48px 20px;
+  text-align: center;
+}
+.atlas-empty-state__title {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--theme-text-primary);
+}
+.atlas-empty-state__sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--theme-text-tertiary);
 }
 </style>

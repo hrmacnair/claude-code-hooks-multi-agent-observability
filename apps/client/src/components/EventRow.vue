@@ -3,7 +3,7 @@
     <!-- HITL Question Section (NEW) -->
     <div
       v-if="event.humanInTheLoop && (event.humanInTheLoopStatus?.status === 'pending' || hasSubmittedResponse)"
-      class="mb-4 p-4 rounded-lg border-2 shadow-lg"
+      class="mb-4 p-4 rounded-lg border-2 shadow-none"
       :class="hasSubmittedResponse || event.humanInTheLoopStatus?.status === 'responded' ? 'border-green-500 bg-gradient-to-r from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20' : 'border-yellow-500 bg-gradient-to-r from-yellow-50 to-yellow-100 dark:from-yellow-900/20 dark:to-yellow-800/20 animate-pulse-slow'"
       @click.stop
     >
@@ -25,12 +25,12 @@
         </div>
         <div class="flex items-center space-x-2 ml-9">
           <span
-            class="text-xs font-semibold text-[var(--theme-text-primary)] px-1.5 py-0.5 rounded-full border-2 bg-[var(--theme-bg-tertiary)] shadow-sm"
+            class="text-xs font-semibold text-[var(--theme-text-primary)] px-1.5 py-0.5 rounded-full border-2 bg-[var(--theme-bg-tertiary)] shadow-none"
             :style="{ ...appBgStyle, ...appBorderStyle }"
           >
             {{ event.source_app }}
           </span>
-          <span class="text-xs text-[var(--theme-text-secondary)] px-1.5 py-0.5 rounded-full border bg-[var(--theme-bg-tertiary)]/50 shadow-sm" :class="borderColorClass">
+          <span class="text-xs text-[var(--theme-text-secondary)] px-1.5 py-0.5 rounded-full border bg-[var(--theme-bg-tertiary)]/50 shadow-none" :class="borderColorClass">
             {{ sessionIdShort }}
           </span>
           <span class="text-xs text-[var(--theme-text-tertiary)] font-medium">
@@ -77,7 +77,7 @@
           <button
             @click.stop="submitResponse"
             :disabled="!responseText.trim() || isSubmitting || hasSubmittedResponse"
-            class="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white font-bold rounded-lg transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-105 disabled:transform-none disabled:cursor-not-allowed"
+            class="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white font-bold rounded-lg transition-all duration-200 shadow-none hover:shadow-none transform hover:scale-105 disabled:transform-none disabled:cursor-not-allowed"
           >
             {{ isSubmitting ? '⏳ Sending...' : '✅ Submit Response' }}
           </button>
@@ -93,7 +93,7 @@
           <button
             @click.stop="submitPermission(false)"
             :disabled="isSubmitting || hasSubmittedResponse"
-            class="px-6 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-105"
+            class="px-6 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg transition-all duration-200 shadow-none hover:shadow-none transform hover:scale-105"
             :class="hasSubmittedResponse ? 'opacity-40 cursor-not-allowed' : ''"
           >
             {{ isSubmitting ? '⏳' : '❌ Deny' }}
@@ -101,7 +101,7 @@
           <button
             @click.stop="submitPermission(true)"
             :disabled="isSubmitting || hasSubmittedResponse"
-            class="px-6 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-105"
+            class="px-6 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg transition-all duration-200 shadow-none hover:shadow-none transform hover:scale-105"
             :class="hasSubmittedResponse ? 'opacity-40 cursor-not-allowed' : ''"
           >
             {{ isSubmitting ? '⏳' : '✅ Approve' }}
@@ -117,7 +117,7 @@
             :key="choice"
             @click.stop="submitChoice(choice)"
             :disabled="isSubmitting || hasSubmittedResponse"
-            class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-bold rounded-lg transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-105 disabled:transform-none"
+            class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-bold rounded-lg transition-all duration-200 shadow-none hover:shadow-none transform hover:scale-105 disabled:transform-none"
           >
             {{ isSubmitting ? '⏳' : choice }}
           </button>
@@ -128,19 +128,19 @@
     <!-- Original Event Row Content (skip if HITL with humanInTheLoop) -->
     <div
       v-if="!event.humanInTheLoop"
-      class="group relative p-4 mobile:p-2 rounded-lg shadow-lg hover:shadow-xl transition-all duration-300 cursor-pointer border border-[var(--theme-border-primary)] hover:border-[var(--theme-primary)] bg-gradient-to-r from-[var(--theme-bg-primary)] to-[var(--theme-bg-secondary)]"
-      :class="{ 'ring-2 ring-[var(--theme-primary)] border-[var(--theme-primary)] shadow-2xl': isExpanded }"
+      class="group relative p-3 mobile:p-2 rounded-lg transition-colors duration-150 cursor-pointer border border-[var(--theme-border-primary)] hover:border-[var(--theme-primary)] bg-[var(--theme-bg-primary)]"
+      :class="{ 'border-[var(--theme-primary)] ring-1 ring-[var(--theme-primary)]/30': isExpanded }"
       @click="toggleExpanded"
     >
     <!-- App color indicator -->
-    <div 
-      class="absolute left-0 top-0 bottom-0 w-3 rounded-l-lg"
+    <div
+      class="absolute left-0 top-0 bottom-0 w-1.5 rounded-l-lg"
       :style="{ backgroundColor: appHexColor }"
     ></div>
-    
+
     <!-- Session color indicator -->
-    <div 
-      class="absolute left-3 top-0 bottom-0 w-1.5"
+    <div
+      class="absolute left-1.5 top-0 bottom-0 w-0.5 opacity-70"
       :class="gradientClass"
     ></div>
     
@@ -150,7 +150,7 @@
         <!-- Mobile: App + Time on first row -->
         <div class="flex items-center justify-between mb-1">
           <span 
-            class="text-xs font-semibold text-[var(--theme-text-primary)] px-1.5 py-0.5 rounded-full border-2 bg-[var(--theme-bg-tertiary)] shadow-md"
+            class="text-xs font-semibold text-[var(--theme-text-primary)] px-1.5 py-0.5 rounded-full border-2 bg-[var(--theme-bg-tertiary)] shadow-none"
             :style="{ ...appBgStyle, ...appBorderStyle }"
           >
             {{ event.source_app }}
@@ -165,14 +165,14 @@
           <span class="text-xs text-[var(--theme-text-secondary)] px-1.5 py-0.5 rounded-full border bg-[var(--theme-bg-tertiary)]/50" :class="borderColorClass">
             {{ sessionIdShort }}
           </span>
-          <span v-if="event.model_name" class="text-xs text-[var(--theme-text-secondary)] px-1.5 py-0.5 rounded-full border bg-[var(--theme-bg-tertiary)]/50 shadow-sm" :title="`Model: ${event.model_name}`">
+          <span v-if="event.model_name" class="text-xs text-[var(--theme-text-secondary)] px-1.5 py-0.5 rounded-full border bg-[var(--theme-bg-tertiary)]/50 shadow-none" :title="`Model: ${event.model_name}`">
             <span class="mr-0.5">🧠</span>{{ formatModelName(event.model_name) }}
           </span>
-          <span class="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold bg-[var(--theme-primary)] text-white shadow-md">
+          <span class="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold bg-[var(--theme-primary)] text-white shadow-none">
             <span class="mr-1 text-sm">{{ hookEmoji }}</span>
             {{ event.hook_event_type }}
           </span>
-          <span v-if="toolName" class="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-semibold border-2 border-[var(--theme-primary)] text-[var(--theme-primary)] bg-[var(--theme-primary-light)] shadow-sm">
+          <span v-if="toolName" class="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-semibold border-2 border-[var(--theme-primary)] text-[var(--theme-primary)] bg-[var(--theme-primary-light)] shadow-none">
             <span class="mr-0.5">{{ toolEmoji }}</span>{{ toolName }}
           </span>
         </div>
@@ -182,22 +182,22 @@
       <div class="flex items-center justify-between mb-2 mobile:hidden">
         <div class="flex items-center space-x-4">
           <span
-            class="text-base font-bold text-[var(--theme-text-primary)] px-2 py-0.5 rounded-full border-2 bg-[var(--theme-bg-tertiary)] shadow-lg"
+            class="text-base font-bold text-[var(--theme-text-primary)] px-2 py-0.5 rounded-full border-2 bg-[var(--theme-bg-tertiary)] shadow-none"
             :style="{ ...appBgStyle, ...appBorderStyle }"
           >
             {{ event.source_app }}
           </span>
-          <span class="text-sm text-[var(--theme-text-secondary)] px-2 py-0.5 rounded-full border bg-[var(--theme-bg-tertiary)]/50 shadow-md" :class="borderColorClass">
+          <span class="text-sm text-[var(--theme-text-secondary)] px-2 py-0.5 rounded-full border bg-[var(--theme-bg-tertiary)]/50 shadow-none" :class="borderColorClass">
             {{ sessionIdShort }}
           </span>
-          <span v-if="event.model_name" class="text-sm text-[var(--theme-text-secondary)] px-2 py-0.5 rounded-full border bg-[var(--theme-bg-tertiary)]/50 shadow-md" :title="`Model: ${event.model_name}`">
+          <span v-if="event.model_name" class="text-sm text-[var(--theme-text-secondary)] px-2 py-0.5 rounded-full border bg-[var(--theme-bg-tertiary)]/50 shadow-none" :title="`Model: ${event.model_name}`">
             <span class="mr-1">🧠</span>{{ formatModelName(event.model_name) }}
           </span>
-          <span class="inline-flex items-center px-3 py-0.5 rounded-full text-sm font-bold bg-[var(--theme-primary)] text-white shadow-lg">
+          <span class="inline-flex items-center px-3 py-0.5 rounded-full text-sm font-bold bg-[var(--theme-primary)] text-white shadow-none">
             <span class="mr-1.5 text-base">{{ hookEmoji }}</span>
             {{ event.hook_event_type }}
           </span>
-          <span v-if="toolName" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-sm font-semibold border-2 border-[var(--theme-primary)] text-[var(--theme-primary)] bg-[var(--theme-primary-light)] shadow-sm">
+          <span v-if="toolName" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-sm font-semibold border-2 border-[var(--theme-primary)] text-[var(--theme-primary)] bg-[var(--theme-primary-light)] shadow-none">
             <span class="mr-1">{{ toolEmoji }}</span>{{ toolName }}
           </span>
         </div>
@@ -209,12 +209,12 @@
       <!-- Tool info and Summary - Desktop Layout -->
       <div class="flex items-center justify-between mb-2 mobile:hidden">
         <div v-if="toolInfo" class="text-base text-[var(--theme-text-secondary)] font-semibold">
-          <span class="font-medium italic px-2 py-0.5 rounded border-2 border-[var(--theme-primary)] bg-[var(--theme-primary-light)] shadow-sm">{{ toolInfo.tool }}</span>
+          <span class="font-medium italic px-2 py-0.5 rounded border-2 border-[var(--theme-primary)] bg-[var(--theme-primary-light)] shadow-none">{{ toolInfo.tool }}</span>
           <span v-if="toolInfo.detail" class="ml-2 text-[var(--theme-text-tertiary)]" :class="{ 'italic': event.hook_event_type === 'UserPromptSubmit' }">{{ toolInfo.detail }}</span>
         </div>
         
         <!-- Summary aligned to the right -->
-        <div v-if="event.summary" class="max-w-[50%] px-3 py-1.5 bg-[var(--theme-primary)]/10 border border-[var(--theme-primary)]/30 rounded-lg shadow-md">
+        <div v-if="event.summary" class="max-w-[50%] px-3 py-1.5 bg-[var(--theme-primary)]/10 border border-[var(--theme-primary)]/30 rounded-lg shadow-none">
           <span class="text-sm text-[var(--theme-text-primary)] font-semibold">
             <span class="mr-1">📝</span>
             {{ event.summary }}
@@ -225,11 +225,11 @@
       <!-- Tool info and Summary - Mobile Layout -->
       <div class="space-y-2 hidden mobile:block mb-2">
         <div v-if="toolInfo" class="text-sm text-[var(--theme-text-secondary)] font-semibold w-full">
-          <span class="font-medium italic px-1.5 py-0.5 rounded border-2 border-[var(--theme-primary)] bg-[var(--theme-primary-light)] shadow-sm">{{ toolInfo.tool }}</span>
+          <span class="font-medium italic px-1.5 py-0.5 rounded border-2 border-[var(--theme-primary)] bg-[var(--theme-primary-light)] shadow-none">{{ toolInfo.tool }}</span>
           <span v-if="toolInfo.detail" class="ml-2 text-[var(--theme-text-tertiary)]" :class="{ 'italic': event.hook_event_type === 'UserPromptSubmit' }">{{ toolInfo.detail }}</span>
         </div>
         
-        <div v-if="event.summary" class="w-full px-2 py-1 bg-[var(--theme-primary)]/10 border border-[var(--theme-primary)]/30 rounded-lg shadow-md">
+        <div v-if="event.summary" class="w-full px-2 py-1 bg-[var(--theme-primary)]/10 border border-[var(--theme-primary)]/30 rounded-lg shadow-none">
           <span class="text-xs text-[var(--theme-text-primary)] font-semibold">
             <span class="mr-1">📝</span>
             {{ event.summary }}
@@ -238,22 +238,22 @@
       </div>
       
       <!-- Expanded content -->
-      <div v-if="isExpanded" class="mt-2 pt-2 border-t-2 border-[var(--theme-primary)] bg-gradient-to-r from-[var(--theme-bg-primary)] to-[var(--theme-bg-secondary)] rounded-b-lg p-3 space-y-3">
+      <div v-if="isExpanded" class="mt-2 pt-3 border-t border-[var(--theme-border-primary)] bg-[var(--theme-bg-secondary)] rounded-b-lg p-3 space-y-3">
         <!-- Payload -->
         <div>
           <div class="flex items-center justify-between mb-2">
-            <h4 class="text-base mobile:text-sm font-bold text-[var(--theme-primary)] drop-shadow-sm flex items-center">
+            <h4 class="text-base mobile:text-sm font-bold text-[var(--theme-primary)] drop-shadow-none flex items-center">
               <span class="mr-1.5 text-xl mobile:text-base">📦</span>
               Payload
             </h4>
             <button
               @click.stop="copyPayload"
-              class="px-3 py-1 mobile:px-2 mobile:py-0.5 text-sm mobile:text-xs font-bold rounded-lg bg-[var(--theme-primary)] hover:bg-[var(--theme-primary-dark)] text-white transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-105 flex items-center space-x-1"
+              class="px-3 py-1 mobile:px-2 mobile:py-0.5 text-sm mobile:text-xs font-bold rounded-lg bg-[var(--theme-primary)] hover:bg-[var(--theme-primary-dark)] text-white transition-all duration-200 shadow-none hover:shadow-none transform hover:scale-105 flex items-center space-x-1"
             >
               <span>{{ copyButtonText }}</span>
             </button>
           </div>
-          <pre class="text-sm mobile:text-xs text-[var(--theme-text-primary)] bg-[var(--theme-bg-tertiary)] p-3 mobile:p-2 rounded-lg overflow-x-auto max-h-64 overflow-y-auto font-mono border border-[var(--theme-primary)]/30 shadow-md hover:shadow-lg transition-shadow duration-200">{{ formattedPayload }}</pre>
+          <pre class="text-sm mobile:text-xs text-[var(--theme-text-primary)] bg-[var(--theme-bg-tertiary)] p-3 mobile:p-2 rounded-lg overflow-x-auto max-h-64 overflow-y-auto font-mono border border-[var(--theme-primary)]/30 shadow-none hover:shadow-none transition-shadow duration-200">{{ formattedPayload }}</pre>
         </div>
         
         <!-- Chat transcript button -->
@@ -261,7 +261,7 @@
           <button
             @click.stop="!isMobile && (showChatModal = true)"
             :class="[
-              'px-4 py-2 mobile:px-3 mobile:py-1.5 font-bold rounded-lg transition-all duration-200 flex items-center space-x-1.5 shadow-md hover:shadow-lg',
+              'px-4 py-2 mobile:px-3 mobile:py-1.5 font-bold rounded-lg transition-all duration-200 flex items-center space-x-1.5 shadow-none hover:shadow-none',
               isMobile 
                 ? 'bg-[var(--theme-bg-quaternary)] cursor-not-allowed opacity-50 text-[var(--theme-text-quaternary)] border border-[var(--theme-border-tertiary)]' 
                 : 'bg-gradient-to-r from-[var(--theme-primary)] to-[var(--theme-primary-light)] hover:from-[var(--theme-primary-dark)] hover:to-[var(--theme-primary)] text-white border border-[var(--theme-primary-dark)] transform hover:scale-105'
@@ -269,7 +269,7 @@
             :disabled="isMobile"
           >
             <span class="text-base mobile:text-sm">💬</span>
-            <span class="text-sm mobile:text-xs font-bold drop-shadow-sm">
+            <span class="text-sm mobile:text-xs font-bold drop-shadow-none">
               {{ isMobile ? 'Not available in mobile' : `View Chat Transcript (${event.chat.length} messages)` }}
             </span>
           </button>

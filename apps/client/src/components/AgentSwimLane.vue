@@ -80,19 +80,11 @@
       ></canvas>
       <div
         v-if="tooltip.visible"
-        class="absolute bg-gradient-to-r from-[var(--theme-primary)] to-[var(--theme-primary-dark)] text-white px-2 py-1.5 rounded-lg text-xs pointer-events-none z-10 shadow-lg border border-[var(--theme-primary-light)] font-bold drop-shadow-md"
+        class="lane-tooltip"
         :style="{ left: tooltip.x + 'px', top: tooltip.y + 'px' }"
-      >
-        {{ tooltip.text }}
-      </div>
-      <div
-        v-if="!hasData"
-        class="absolute inset-0 flex items-center justify-center"
-      >
-        <p class="text-[var(--theme-text-tertiary)] text-sm font-semibold">
-          <span class="mr-1">⏳</span>
-          Waiting for events...
-        </p>
+      >{{ tooltip.text }}</div>
+      <div v-if="!hasData" class="absolute inset-0 flex items-center justify-center">
+        <p class="lane-waiting">Waiting for events…</p>
       </div>
     </div>
   </div>
@@ -510,19 +502,17 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 8px;
-  background: var(--theme-bg-tertiary);
+  padding: 4px 8px;
+  background: var(--theme-bg-secondary);
   border: 1px solid var(--theme-border-primary);
-  border-radius: 8px;
-  color: var(--theme-text-primary);
+  border-radius: 6px;
+  color: var(--theme-text-secondary);
   font-size: 11px;
   white-space: nowrap;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
   user-select: none;
-  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-  min-height: 28px;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  min-height: 24px;
 }
 
 .model-badge {
@@ -532,13 +522,9 @@ onUnmounted(() => {
 .event-count-badge:hover,
 .tool-call-badge:hover,
 .model-badge:hover {
-  background: var(--theme-bg-quaternary);
-  border-color: var(--theme-primary);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-.avg-time-badge {
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  background: var(--theme-bg-tertiary);
+  border-color: var(--theme-border-secondary);
+  color: var(--theme-text-primary);
 }
 
 .close-btn {
@@ -570,6 +556,26 @@ onUnmounted(() => {
   border: 1px solid var(--theme-border-primary);
   border-radius: 6px;
   overflow: hidden;
-  background: var(--theme-bg-tertiary);
+  background: var(--theme-bg-secondary);
+}
+
+.lane-tooltip {
+  position: absolute;
+  z-index: 10;
+  pointer-events: none;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #FFFFFF;
+  background: rgba(28, 28, 30, 0.92);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.lane-waiting {
+  font-size: 12px;
+  color: var(--theme-text-tertiary);
+  font-weight: 500;
 }
 </style>

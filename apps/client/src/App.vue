@@ -1,63 +1,28 @@
 <template>
   <div class="h-screen flex flex-col bg-[var(--theme-bg-secondary)]">
-    <!-- Header with Primary Theme Colors -->
-    <header class="short:hidden bg-gradient-to-r from-[var(--theme-primary)] to-[var(--theme-primary-light)] shadow-lg border-b-2 border-[var(--theme-primary-dark)]">
-      <div class="px-3 py-4 mobile:py-1.5 mobile:px-2 flex items-center justify-between mobile:gap-2">
-        <!-- Title Section - Hidden on mobile -->
-        <div class="mobile:hidden">
-          <h1 class="text-2xl font-bold text-white drop-shadow-lg">
-            Multi-Agent Observability
-          </h1>
+    <!-- Apple-minimal flat header -->
+    <header class="atlas-header short:hidden">
+      <div class="atlas-header__inner">
+        <h1 class="atlas-header__title mobile:hidden">Observability</h1>
+
+        <div class="atlas-header__status" :title="isConnected ? 'Connected' : 'Disconnected'">
+          <span class="atlas-status-dot" :class="isConnected ? 'is-online' : 'is-offline'"></span>
+          <span class="atlas-header__status-label mobile:hidden">{{ isConnected ? 'Live' : 'Offline' }}</span>
         </div>
 
-        <!-- Connection Status -->
-        <div class="flex items-center mobile:space-x-1 space-x-1.5">
-          <div v-if="isConnected" class="flex items-center mobile:space-x-0.5 space-x-1.5">
-            <span class="relative flex mobile:h-2 mobile:w-2 h-3 w-3">
-              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-              <span class="relative inline-flex rounded-full mobile:h-2 mobile:w-2 h-3 w-3 bg-green-500"></span>
-            </span>
-            <span class="text-base mobile:text-xs text-white font-semibold drop-shadow-md mobile:hidden">Connected</span>
-          </div>
-          <div v-else class="flex items-center mobile:space-x-0.5 space-x-1.5">
-            <span class="relative flex mobile:h-2 mobile:w-2 h-3 w-3">
-              <span class="relative inline-flex rounded-full mobile:h-2 mobile:w-2 h-3 w-3 bg-red-500"></span>
-            </span>
-            <span class="text-base mobile:text-xs text-white font-semibold drop-shadow-md mobile:hidden">Disconnected</span>
-          </div>
-        </div>
+        <div class="atlas-header__actions">
+          <span class="atlas-counter">{{ events.length }}</span>
 
-        <!-- Event Count and Theme Toggle -->
-        <div class="flex items-center mobile:space-x-1 space-x-2">
-          <span class="text-base mobile:text-xs text-white font-semibold drop-shadow-md bg-[var(--theme-primary-dark)] mobile:px-2 mobile:py-0.5 px-3 py-1.5 rounded-full border border-white/30">
-            {{ events.length }}
-          </span>
-
-          <!-- Clear Button -->
-          <button
-            @click="handleClearClick"
-            class="p-3 mobile:p-1 rounded-lg bg-white/20 hover:bg-white/30 transition-all duration-200 border border-white/30 hover:border-white/50 backdrop-blur-sm shadow-lg hover:shadow-xl"
-            title="Clear events"
-          >
-            <span class="text-2xl mobile:text-base">🗑️</span>
+          <button class="atlas-iconbtn" @click="handleClearClick" title="Clear events" aria-label="Clear events">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.5 9.5a1 1 0 0 0 1 1h5a1 1 0 0 0 1-1L12 4M6.5 6.5v6M9.5 6.5v6"/></svg>
           </button>
 
-          <!-- Filters Toggle Button -->
-          <button
-            @click="showFilters = !showFilters"
-            class="p-3 mobile:p-1 rounded-lg bg-white/20 hover:bg-white/30 transition-all duration-200 border border-white/30 hover:border-white/50 backdrop-blur-sm shadow-lg hover:shadow-xl"
-            :title="showFilters ? 'Hide filters' : 'Show filters'"
-          >
-            <span class="text-2xl mobile:text-base">📊</span>
+          <button class="atlas-iconbtn" @click="showFilters = !showFilters" :title="showFilters ? 'Hide filters' : 'Show filters'" :aria-pressed="showFilters">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h12M4 8h8M6 12h4"/></svg>
           </button>
 
-          <!-- Theme Manager Button -->
-          <button
-            @click="handleThemeManagerClick"
-            class="p-3 mobile:p-1 rounded-lg bg-white/20 hover:bg-white/30 transition-all duration-200 border border-white/30 hover:border-white/50 backdrop-blur-sm shadow-lg hover:shadow-xl"
-            title="Open theme manager"
-          >
-            <span class="text-2xl mobile:text-base">🎨</span>
+          <button class="atlas-iconbtn" @click="handleThemeManagerClick" title="Theme" aria-label="Theme">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 2v12M2 8h12"/></svg>
           </button>
         </div>
       </div>
@@ -81,7 +46,7 @@
     />
 
     <!-- Agent Swim Lane Container (below pulse chart, full width, hidden when empty) -->
-    <div v-if="selectedAgentLanes.length > 0" class="w-full bg-[var(--theme-bg-secondary)] px-3 py-4 mobile:px-2 mobile:py-2 overflow-hidden">
+    <div v-if="selectedAgentLanes.length > 0" class="w-full bg-[var(--theme-bg-secondary)] px-3 py-3 mobile:px-2 mobile:py-2 overflow-hidden border-t border-[var(--theme-border-primary)]">
       <AgentSwimLaneContainer
         :selected-agents="selectedAgentLanes"
         :events="events"
@@ -132,6 +97,9 @@
       :agent-color="toast.agentColor"
       @dismiss="dismissToast(toast.id)"
     />
+
+    <!-- Atlas stats sidebar (Phase 9) -->
+    <AtlasStatsPanel />
   </div>
 </template>
 
@@ -148,6 +116,7 @@ import LivePulseChart from './components/LivePulseChart.vue';
 import ThemeManager from './components/ThemeManager.vue';
 import ToastNotification from './components/ToastNotification.vue';
 import AgentSwimLaneContainer from './components/AgentSwimLaneContainer.vue';
+import AtlasStatsPanel from './components/AtlasStatsPanel.vue';
 import { WS_URL } from './config';
 
 // WebSocket connection
@@ -229,7 +198,105 @@ const handleClearClick = () => {
 
 // Debug handler for theme manager
 const handleThemeManagerClick = () => {
-  console.log('Theme manager button clicked!');
   showThemeManager.value = true;
 };
 </script>
+
+<style scoped>
+.atlas-header {
+  background: var(--theme-bg-primary);
+  border-bottom: 1px solid var(--theme-border-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+.atlas-header__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 20px;
+}
+@media (max-width: 699px) {
+  .atlas-header__inner { padding: 8px 12px; gap: 8px; }
+}
+
+.atlas-header__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--theme-text-primary);
+}
+
+.atlas-header__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: auto;
+  margin-left: 8px;
+}
+.atlas-header__status-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--theme-text-tertiary);
+  letter-spacing: 0.01em;
+}
+.atlas-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.atlas-status-dot.is-online {
+  background: var(--theme-accent-success);
+  box-shadow: 0 0 0 3px rgba(48, 209, 88, 0.18);
+}
+.atlas-status-dot.is-offline {
+  background: var(--theme-accent-error);
+  box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.18);
+}
+
+.atlas-header__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.atlas-counter {
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--theme-text-secondary);
+  background: var(--theme-bg-secondary);
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--theme-border-primary);
+  min-width: 28px;
+  text-align: center;
+}
+
+.atlas-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--theme-text-secondary);
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.atlas-iconbtn:hover {
+  background: var(--theme-hover-bg);
+  color: var(--theme-text-primary);
+}
+.atlas-iconbtn[aria-pressed="true"] {
+  background: var(--theme-primary-light);
+  color: var(--theme-primary);
+}
+@media (max-width: 699px) {
+  .atlas-iconbtn { width: 32px; height: 32px; }
+}
+</style>
