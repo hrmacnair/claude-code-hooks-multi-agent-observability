@@ -4,7 +4,9 @@
     <div class="token-spend__hero" :title="`Month $${monthDollars} · ${monthCalls} calls`">
       ${{ todayDollars }}
     </div>
-    <div class="token-spend__meta">today · {{ todayCalls }} calls</div>
+    <div class="token-spend__meta">
+      <span class="hide-mobile">today · </span>{{ todayCalls }} calls
+    </div>
   </article>
 </template>
 
@@ -48,7 +50,11 @@ const monthCalls = computed(() => stats.value?.codeburn.month?.calls ?? 0);
   line-height: 1;
 }
 @media (max-width: 1023px) {
-  .token-spend__hero { font-size: 44px; }
+  .token-spend__hero { font-size: 40px; }
+}
+@media (max-width: 480px) {
+  .token-spend__hero { font-size: 32px; }
+  .hide-mobile { display: none; }
 }
 
 .token-spend__meta {

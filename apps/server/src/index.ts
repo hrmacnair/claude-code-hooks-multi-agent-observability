@@ -118,7 +118,7 @@ function stripTags(s: string): string {
 let todaysBriefCache: { ts: number; data: any } | null = null;
 const TODAYS_BRIEF_TTL_MS = 60_000;
 
-async function getTodaysBrief(): Promise<any> {
+async function getTodaysBriefs(): Promise<any> {
   if (todaysBriefCache && Date.now() - todaysBriefCache.ts < TODAYS_BRIEF_TTL_MS) {
     return todaysBriefCache.data;
   }
@@ -129,26 +129,22 @@ async function getTodaysBrief(): Promise<any> {
 
   let data: any;
   if (todays.length > 0) {
-    const primary = todays[0];
-    const earlier = todays.slice(1).map(b => ({ date: b.date, slug: b.slug, title: b.title }));
-    data = {
-      empty: false,
-      date: primary.date,
-      topic: primary.topic,
-      slug: primary.slug,
-      title: primary.title,
-      tldr: primary.tldr,
-      htmlBody: await extractBriefBody(primary.path),
-      recommendedAction: null, // future: parse a "## Recommended action" section
-      prompts: [],             // future: parse copyable prompt blocks
-      hasMultipleToday: todays.length > 1,
-      earlierToday: earlier,
-    };
+    const briefs = await Promise.all(todays.map(async (b) => ({
+      date: b.date,
+      topic: b.topic,
+      slug: b.slug,
+      title: b.title,
+      tldr: b.tldr,
+      htmlBody: await extractBriefBody(b.path),
+      recommendedAction: null,
+      prompts: [],
+      time: '', // future: parse fired-at time from html or mtime
+    })));
+    data = { briefs };
   } else {
     const latest = all[0];
     data = {
-      empty: true,
-      message: 'No brief today.',
+      briefs: [],
       latestPriorBrief: latest
         ? {
             date: latest.date,
@@ -186,21 +182,181 @@ async function extractBriefBody(path: string): Promise<string> {
   }
 }
 
-// Dynamic-import the bot-tg router (it's ESM JS). routeMessage classifies
-// the prompt, backendFor maps tier → CLI backend.
-async function atlasTalk(message: string): Promise<{ reply: string; decision: any }> {
+// ---- Talk attachments ----
+const MAX_FILES = 5;
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const TALK_TMP_ROOT = '/tmp/atlas-talk';
+
+const TEXT_EXTS = new Set('txt md rtf js ts tsx jsx py swift json yaml yml html css'.split(' '));
+const IMAGE_EXTS = new Set('jpg jpeg png heic heif webp gif'.split(' '));
+const PDF_EXT = 'pdf';
+
+interface SavedFile {
+  name: string;
+  ext: string;
+  mime: string;
+  path: string;
+  size: number;
+}
+
+function extOf(name: string): string {
+  return (name.split('.').pop() || '').toLowerCase();
+}
+
+function isAllowedFile(f: File): boolean {
+  const ext = extOf(f.name);
+  if (TEXT_EXTS.has(ext) || IMAGE_EXTS.has(ext) || ext === PDF_EXT) return true;
+  if (f.type.startsWith('image/')) return true;
+  if (f.type.startsWith('text/')) return true;
+  if (f.type === 'application/pdf') return true;
+  return false;
+}
+
+async function saveUploads(files: File[]): Promise<SavedFile[]> {
+  if (!files.length) return [];
+  const session = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const dir = `${TALK_TMP_ROOT}/${session}`;
+  await Bun.spawn(['mkdir', '-p', dir]).exited;
+  const out: SavedFile[] = [];
+  for (const f of files) {
+    const ext = extOf(f.name);
+    const safeName = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const path = `${dir}/${safeName}`;
+    const buffer = await f.arrayBuffer();
+    await Bun.write(path, buffer);
+    out.push({ name: f.name, ext, mime: f.type, path, size: f.size });
+  }
+  return out;
+}
+
+// Sweep /tmp/atlas-talk/* older than 24h on server startup
+async function cleanupOldTalkUploads() {
+  try {
+    await Bun.spawn(['bash', '-c', `find ${TALK_TMP_ROOT} -mindepth 1 -maxdepth 1 -type d -mtime +0 -exec rm -rf {} + 2>/dev/null || true`]).exited;
+  } catch {/* non-fatal */}
+}
+cleanupOldTalkUploads();
+
+// Anthropic Messages API for vision (when images attached)
+const ANTHROPIC_MODEL_IDS: Record<string, string> = {
+  haiku: 'claude-haiku-4-5-20251001',
+  sonnet: 'claude-sonnet-4-5-20250929',
+  opus: 'claude-opus-4-1-20250805',
+};
+
+async function callAnthropicVision(opts: {
+  model: string;
+  systemPrompt: string;
+  message: string;
+  images: SavedFile[];
+}): Promise<string> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY missing');
+
+  const modelId = ANTHROPIC_MODEL_IDS[opts.model] || ANTHROPIC_MODEL_IDS.sonnet;
+
+  const content: any[] = [];
+  for (const img of opts.images) {
+    const bytes = await Bun.file(img.path).arrayBuffer();
+    const b64 = Buffer.from(bytes).toString('base64');
+    const mediaType = img.mime || (img.ext === 'png' ? 'image/png' : 'image/jpeg');
+    content.push({
+      type: 'image',
+      source: { type: 'base64', media_type: mediaType, data: b64 },
+    });
+  }
+  content.push({ type: 'text', text: opts.message || 'Describe the attached image(s).' });
+
+  const body = JSON.stringify({
+    model: modelId,
+    max_tokens: 1024,
+    system: opts.systemPrompt,
+    messages: [{ role: 'user', content }],
+  });
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Anthropic ${res.status}: ${text.slice(0, 300)}`);
+  }
+  const parsed = await res.json() as any;
+  const reply = (parsed.content || []).map((b: any) => b.text || '').join('').trim();
+  return reply || '(empty reply)';
+}
+
+// Dynamic-import the bot-tg router. routeMessage classifies the prompt,
+// backendFor maps tier → CLI backend. atlasTalk handles attachments by
+// inlining text/code/markdown into the message, sending images via the
+// Anthropic Messages API (vision), and falling back to claude --print
+// for pure-text turns.
+async function atlasTalk(
+  message: string,
+  files: SavedFile[] = []
+): Promise<{ reply: string; decision: any; attachments_processed: string[] }> {
   const router = await import('/Users/hrmacnair/atlas/bot-tg/router.js');
-  const decision = await router.routeMessage(message);
+
+  // Categorize attachments
+  const images = files.filter(f => IMAGE_EXTS.has(f.ext) || f.mime.startsWith('image/'));
+  const textFiles = files.filter(f =>
+    TEXT_EXTS.has(f.ext) || (f.mime.startsWith('text/') && !TEXT_EXTS.has(f.ext) === false)
+  );
+  const pdfFiles = files.filter(f => f.ext === PDF_EXT || f.mime === 'application/pdf');
+
+  // Build a routing-aware message (with attachment hints so the router
+  // can pick the right agent / project / model).
+  let routedMessage = message;
+  for (const f of [...textFiles, ...pdfFiles, ...images]) {
+    routedMessage += `\n[Attached: ${f.name}]`;
+  }
+
+  // Inline text/code/markdown into the enriched prompt (first 50KB per file)
+  let enrichedMessage = message;
+  for (const f of textFiles) {
+    try {
+      const content = await Bun.file(f.path).text();
+      enrichedMessage += `\n\n[Attached: ${f.name}]\n${content.slice(0, 50_000)}\n`;
+    } catch (err: any) {
+      enrichedMessage += `\n\n[Attached: ${f.name} — read failed: ${err.message}]\n`;
+    }
+  }
+  // PDF: stub (no pdf-parse installed). Acknowledge the attachment.
+  for (const f of pdfFiles) {
+    enrichedMessage += `\n\n[Attached PDF: ${f.name} (text extraction not yet wired — please describe what you'd like to do with it)]\n`;
+  }
+
+  let decision = await router.routeMessage(routedMessage);
+
+  // Auto-upgrade for vision
+  if (images.length > 0 && decision.model === 'haiku') {
+    decision = { ...decision, model: 'sonnet', rationale: `${decision.rationale} (upgraded for vision)` };
+  }
+
   const { backend, model } = router.backendFor(decision.model);
   const cwd = router.workingDirFor(decision.agent, decision.project);
   const systemPrompt = router.systemPromptFor(decision.agent, decision.project, 'dashboard');
 
   let reply: string;
   try {
-    if (backend === 'anthropic') {
-      reply = await runClaudeCLI({ model, prompt: message, systemPrompt, cwd });
+    if (images.length > 0) {
+      // Use Anthropic Messages API directly for vision
+      reply = await callAnthropicVision({
+        model: decision.model,
+        systemPrompt,
+        message: enrichedMessage,
+        images,
+      });
+    } else if (backend === 'anthropic') {
+      reply = await runClaudeCLI({ model, prompt: enrichedMessage, systemPrompt, cwd });
     } else if (backend === 'openai' || backend === 'ollama') {
-      reply = await runCodexCLI({ backend, model, prompt: message, systemPrompt, cwd });
+      reply = await runCodexCLI({ backend, model, prompt: enrichedMessage, systemPrompt, cwd });
     } else {
       reply = `(unsupported backend: ${backend})`;
     }
@@ -210,10 +366,15 @@ async function atlasTalk(message: string): Promise<{ reply: string; decision: an
 
   // Log routing decision
   try {
-    router.logRoutingDecision({ surface: 'dashboard', message, decision });
+    router.logRoutingDecision({
+      surface: 'dashboard',
+      message: routedMessage,
+      decision,
+      ...(files.length ? { attachments: files.map(f => f.name) } : {}),
+    } as any);
   } catch {/* non-fatal */}
 
-  return { reply, decision };
+  return { reply, decision, attachments_processed: files.map(f => f.name) };
 }
 
 const CLAUDE_BIN = '/Users/hrmacnair/.local/bin/claude';
@@ -540,9 +701,9 @@ const server = Bun.serve({
       });
     }
 
-    // GET /api/atlas/brief/today - hero brief w/ inline body content
-    if (url.pathname === '/api/atlas/brief/today' && req.method === 'GET') {
-      const data = await getTodaysBrief();
+    // GET /api/atlas/brief/today | /api/atlas/briefs/today - today's brief(s) inline
+    if ((url.pathname === '/api/atlas/brief/today' || url.pathname === '/api/atlas/briefs/today') && req.method === 'GET') {
+      const data = await getTodaysBriefs();
       return new Response(JSON.stringify(data), {
         headers: { ...headers, 'Content-Type': 'application/json' }
       });
@@ -571,17 +732,49 @@ const server = Bun.serve({
       }
     }
 
-    // POST /api/atlas/talk - route + spawn model, return reply
+    // POST /api/atlas/talk - route + spawn model, return reply.
+    // Accepts multipart/form-data with optional 'files' (up to 5, ≤10 MB each)
+    // or JSON { message } for the no-attachment path.
     if (url.pathname === '/api/atlas/talk' && req.method === 'POST') {
       try {
-        const body = await req.json() as { message?: string };
-        const message = (body.message || '').toString().trim();
-        if (!message) {
+        const contentType = req.headers.get('content-type') || '';
+        let message = '';
+        let savedFiles: SavedFile[] = [];
+
+        if (contentType.includes('multipart/form-data')) {
+          const form = await req.formData();
+          message = String(form.get('message') || '').trim();
+          const fileEntries = form.getAll('files').filter((v): v is File => v instanceof File);
+          if (fileEntries.length > MAX_FILES) {
+            return new Response(JSON.stringify({ error: `Max ${MAX_FILES} files per message` }), {
+              status: 400, headers: { ...headers, 'Content-Type': 'application/json' }
+            });
+          }
+          for (const f of fileEntries) {
+            if (f.size > MAX_FILE_BYTES) {
+              return new Response(JSON.stringify({ error: `File too large (limit 10 MB): ${f.name}` }), {
+                status: 400, headers: { ...headers, 'Content-Type': 'application/json' }
+              });
+            }
+            if (!isAllowedFile(f)) {
+              return new Response(JSON.stringify({ error: `Unsupported file type: ${f.name}` }), {
+                status: 400, headers: { ...headers, 'Content-Type': 'application/json' }
+              });
+            }
+          }
+          savedFiles = await saveUploads(fileEntries);
+        } else {
+          const body = await req.json() as { message?: string };
+          message = String(body?.message || '').trim();
+        }
+
+        if (!message && savedFiles.length === 0) {
           return new Response(JSON.stringify({ error: 'message required' }), {
             status: 400, headers: { ...headers, 'Content-Type': 'application/json' }
           });
         }
-        const result = await atlasTalk(message);
+
+        const result = await atlasTalk(message, savedFiles);
         return new Response(JSON.stringify(result), {
           headers: { ...headers, 'Content-Type': 'application/json' }
         });

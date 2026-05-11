@@ -76,7 +76,12 @@ function shortName(name: string): string {
   color: var(--atlas-text-strong);
   line-height: 1;
 }
-@media (max-width: 1023px) { .services__hero { font-size: 36px; gap: 10px; } }
+@media (max-width: 1023px) { .services__hero { font-size: 40px; gap: 10px; } }
+@media (max-width: 480px) {
+  .services__hero { font-size: 32px; gap: 8px; }
+  .services__dot { width: 14px; height: 14px; }
+  .services__list { display: none; }
+}
 
 .services__dot {
   width: 18px;

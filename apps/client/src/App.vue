@@ -1,5 +1,5 @@
 <template>
-  <div class="atlas-page" v-show="!readingBrief">
+  <div class="atlas-page" v-show="!readingBrief && !talkFullscreen">
     <WordmarkRow />
     <div class="atlas-page__divider"></div>
     <StatusRow />
@@ -12,16 +12,12 @@
           <ServicesCard id="services" />
         </div>
         <WhatAtlasDidCard :events="events" />
-        <TalkCard />
-        <LiveActivityCard :events="events" />
+        <TalkCard :compact="isCompact" @open-fullscreen="talkFullscreen = true" />
+        <LiveActivityCard :events="events" @view-all="liveAllOpen = true" />
       </section>
 
       <section id="brief" class="atlas-page__right">
-        <TodaysBriefCard
-          :compact="isCompact"
-          @open-full="onOpenFull"
-          @open-prior="onOpenPrior"
-        />
+        <TodaysBriefCard :compact="isCompact" @open-full="onOpenFull" />
       </section>
     </main>
 
@@ -32,6 +28,17 @@
     v-if="readingBrief"
     :brief="readingBrief"
     @close="readingBrief = null"
+  />
+
+  <TalkFullscreen
+    v-if="talkFullscreen"
+    @close="talkFullscreen = false"
+  />
+
+  <LiveActivityModal
+    v-if="liveAllOpen"
+    :events="events"
+    @close="liveAllOpen = false"
   />
 </template>
 
@@ -48,12 +55,13 @@ import TalkCard from './components/dashboard/cards/TalkCard.vue';
 import LiveActivityCard from './components/dashboard/cards/LiveActivityCard.vue';
 import TodaysBriefCard from './components/dashboard/cards/TodaysBriefCard.vue';
 import BriefReadingView from './views/BriefReadingView.vue';
-import { API_BASE_URL, WS_URL } from './config';
+import TalkFullscreen from './views/TalkFullscreen.vue';
+import LiveActivityModal from './components/dashboard/LiveActivityModal.vue';
+import { WS_URL } from './config';
 
 const { events, error } = useWebSocket(WS_URL);
 useTheme();
 
-// Responsive: compact brief preview on phone-ish widths
 const isCompact = ref(false);
 function recomputeCompact() {
   isCompact.value = window.matchMedia('(max-width: 1023px)').matches;
@@ -64,40 +72,34 @@ onMounted(() => {
 });
 onUnmounted(() => window.removeEventListener('resize', recomputeCompact));
 
-// Brief reading view (push-nav on mobile)
 const readingBrief = ref<any>(null);
+const talkFullscreen = ref(false);
+const liveAllOpen = ref(false);
 
-async function onOpenFull(brief: any) {
+function onOpenFull(brief: any) {
   readingBrief.value = brief;
-}
-
-async function onOpenPrior(b: { date: string; slug: string; title: string }) {
-  // load the prior brief body via /api/atlas/briefs file proxy
-  try {
-    const all = await fetch(`${API_BASE_URL}/api/atlas/briefs`).then(r => r.json());
-    const match = (all?.briefs || []).find((x: any) => x.date === b.date && x.slug === b.slug);
-    if (!match) return;
-    const html = await fetch(`${API_BASE_URL}/api/atlas/briefs/file?path=${encodeURIComponent(match.path)}`).then(r => r.text());
-    const body = html.match(/<article[^>]*class="content"[^>]*>([\s\S]*?)<\/article>/i)?.[1] || html;
-    readingBrief.value = { date: match.date, title: match.title, slug: match.slug, htmlBody: body };
-  } catch (err) {
-    console.error('[brief] open-prior failed', err);
-  }
 }
 </script>
 
 <style scoped>
 .atlas-page {
-  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
   background: var(--atlas-page-bg);
   color: var(--atlas-text-primary);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  overflow: hidden;
+}
+@media (max-width: 1023px) {
+  .atlas-page { height: auto; min-height: 100vh; overflow: visible; }
 }
 
 .atlas-page__divider {
   height: 1px;
   background: var(--atlas-hairline);
   margin: 0 48px;
+  flex: none;
 }
 @media (max-width: 1023px) {
   .atlas-page__divider { margin: 0 24px; }
@@ -105,15 +107,20 @@ async function onOpenPrior(b: { date: string; slug: string; title: string }) {
 
 .atlas-page__grid {
   display: grid;
-  grid-template-columns: 40fr 60fr;
+  grid-template-columns: minmax(0, 40fr) minmax(0, 60fr);
   gap: 32px;
-  padding: 32px 48px 64px;
+  padding: 32px 48px 48px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 @media (max-width: 1023px) {
   .atlas-page__grid {
     grid-template-columns: 1fr;
-    padding: 24px 24px 64px;
+    padding: 24px 24px 48px;
     gap: 16px;
+    overflow: visible;
+    flex: none;
   }
 }
 
@@ -122,19 +129,27 @@ async function onOpenPrior(b: { date: string; slug: string; title: string }) {
   flex-direction: column;
   gap: 16px;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+@media (max-width: 1023px) {
+  .atlas-page__left { overflow-y: visible; padding-right: 0; }
 }
 
 .atlas-page__right {
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .atlas-page__stats-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 16px;
 }
 
-/* On mobile, brief comes BEFORE left column. Reorder. */
 @media (max-width: 1023px) {
   .atlas-page__right { order: -1; }
 }

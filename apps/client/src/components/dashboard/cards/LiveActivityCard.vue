@@ -1,6 +1,9 @@
 <template>
   <article class="card live-activity">
-    <span class="card-eyebrow">Live activity</span>
+    <div class="la__head">
+      <span class="card-eyebrow">Live activity</span>
+      <a v-if="props.events.length > rows.length" class="la__viewall" href="#" @click.prevent="$emit('view-all')">View all activity →</a>
+    </div>
     <ul v-if="rows.length" class="la__list">
       <li v-for="e in rows" :key="`${e.id}-${e.timestamp}`" class="la__row">
         <span class="la__time">{{ formatHM(e.timestamp) }}</span>
@@ -20,6 +23,7 @@ import type { HookEvent } from '../../../types';
 import { useEventEmojis } from '../../../composables/useEventEmojis';
 
 const props = defineProps<{ events: HookEvent[] }>();
+defineEmits<{ (e: 'view-all'): void }>();
 const { getLabelForEventType, getToneForEventType } = useEventEmojis();
 
 const rows = computed(() => props.events.slice(-18).reverse());
@@ -62,6 +66,12 @@ function formatHM(ts?: number): string {
 }
 @media (max-width: 1023px) { .card { padding: 24px; } }
 
+.la__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
 .card-eyebrow {
   display: block;
   font-size: 12px;
@@ -70,6 +80,13 @@ function formatHM(ts?: number): string {
   text-transform: uppercase;
   color: var(--atlas-text-secondary);
 }
+.la__viewall {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--atlas-blue);
+  text-decoration: none;
+}
+.la__viewall:hover { opacity: 0.7; }
 
 .la__list {
   margin: 20px 0 0;
