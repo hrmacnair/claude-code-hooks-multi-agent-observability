@@ -17,12 +17,14 @@
     <p class="ws-card__prompt">{{ task.prompt }}</p>
     <footer class="ws-card__actions" @click.stop>
       <button v-if="task.status === 'backlog'" class="ws-card__btn ws-card__btn--primary" @click="$emit('spawn', task)">▶ Run</button>
+      <button v-if="task.status === 'queued'" class="ws-card__btn ws-card__btn--ghost" disabled>⏳ Queued</button>
       <button v-if="task.status === 'running'" class="ws-card__btn ws-card__btn--danger" @click="$emit('kill', task)">■ Kill</button>
       <button v-if="task.status === 'review'" class="ws-card__btn ws-card__btn--primary" @click="$emit('done', task)">✓ Done</button>
       <button class="ws-card__btn ws-card__btn--ghost" @click="$emit('toggle-pin', task)" :title="pinned ? 'Unpin' : 'Pin to pane grid'">
         {{ pinned ? '📌 Unpin' : '📌 Pin' }}
       </button>
       <button v-if="['backlog','review','done','failed'].includes(task.status)" class="ws-card__btn ws-card__btn--ghost" @click="$emit('delete', task)">Delete</button>
+      <span v-if="task.cost_usd != null && task.cost_usd > 0" class="ws-card__cost">${{ task.cost_usd.toFixed(3) }}</span>
       <span v-if="task.status === 'failed'" class="ws-card__exit">exit {{ task.exit_code }}</span>
     </footer>
   </article>
@@ -74,6 +76,7 @@ function onDragEnd() { dragging.value = false; }
 
 .ws-card__pin-flag { margin-left: auto; font-size: 11px; opacity: 0.7; }
 
+.ws-card--queued  { border-left-color: var(--atlas-text-secondary); opacity: 0.7; }
 .ws-card--running { border-left-color: var(--atlas-blue); }
 .ws-card--review  { border-left-color: var(--atlas-orange, #ff9f0a); }
 .ws-card--done    { opacity: 0.6; }
@@ -151,10 +154,17 @@ function onDragEnd() { dragging.value = false; }
 .ws-card__btn--danger { color: var(--atlas-red, #ff453a); border-color: var(--atlas-red, #ff453a); }
 .ws-card__btn--ghost { color: var(--atlas-text-secondary); }
 
+.ws-card__cost {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--atlas-text-secondary);
+  margin-left: auto;
+  opacity: 0.75;
+}
 .ws-card__exit {
   font-family: ui-monospace, Menlo, monospace;
   font-size: 10.5px;
   color: var(--atlas-red, #ff453a);
-  margin-left: auto;
+  margin-left: 4px;
 }
 </style>

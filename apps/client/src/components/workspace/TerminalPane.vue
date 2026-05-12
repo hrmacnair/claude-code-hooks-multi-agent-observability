@@ -1,5 +1,5 @@
 <template>
-  <article class="pane" :class="`pane--${task.status}`">
+  <article class="pane" :class="[`pane--${task.status}`, { 'pane--fullscreen': fullscreen }]">
     <header class="pane__head">
       <div class="pane__title-block">
         <span class="pane__model" :class="`pane__model--${task.model}`">{{ task.model }}</span>
@@ -13,7 +13,8 @@
         <button v-if="task.status === 'running'" class="pane__btn pane__btn--danger" @click="$emit('kill', task)" title="Kill">■</button>
         <button v-if="task.status === 'backlog' || task.status === 'failed' || task.status === 'review' || task.status === 'done'"
                 class="pane__btn" @click="$emit('rerun', task)" title="Re-run from scratch">↻</button>
-        <button class="pane__btn" @click="$emit('expand', task)" title="Expand">⤢</button>
+        <button class="pane__btn" @click="toggleFullscreen" :title="fullscreen ? 'Collapse' : 'Fullscreen'">{{ fullscreen ? '⤡' : '⤢' }}</button>
+        <button v-if="!fullscreen" class="pane__btn" @click="$emit('expand', task)" title="Open in drawer">⊞</button>
         <button class="pane__btn" @click="$emit('unpin', task)" title="Unpin">✕</button>
       </div>
     </header>
@@ -63,6 +64,20 @@ const emit = defineEmits<{
 
 const followUpText = ref('');
 const sending = ref(false);
+const fullscreen = ref(false);
+
+function toggleFullscreen() {
+  fullscreen.value = !fullscreen.value;
+  // Allow next tick for layout, then refit
+  nextTick(() => { try { fit?.fit(); } catch {} });
+}
+
+function onEscape(ev: KeyboardEvent) {
+  if (ev.key === 'Escape' && fullscreen.value) {
+    fullscreen.value = false;
+    nextTick(() => { try { fit?.fit(); } catch {} });
+  }
+}
 
 const canFollowUp = computed(() =>
   !!props.task.session_id &&
@@ -113,6 +128,7 @@ const THEME = {
 };
 
 onMounted(async () => {
+  window.addEventListener('keydown', onEscape);
   if (!termHost.value) return;
   term = new Terminal({
     fontFamily: 'ui-monospace, Menlo, monospace',
@@ -170,6 +186,7 @@ watch(() => props.task.id, () => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onEscape);
   resizeObs?.disconnect();
   term?.dispose();
 });
@@ -186,6 +203,13 @@ onBeforeUnmount(() => {
   min-height: 0;
   transition: border-color 100ms ease;
 }
+.pane--fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  border-radius: 0;
+}
+.pane--fullscreen .pane__body { font-size: 14px; }
 .pane--running { border-color: var(--atlas-blue); }
 .pane--review  { border-color: var(--atlas-orange, #ff9f0a); }
 .pane--failed  { border-color: var(--atlas-red, #ff453a); }

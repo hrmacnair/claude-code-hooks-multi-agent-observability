@@ -95,6 +95,30 @@ export function initWorkspaceTables(): void {
       pinned_at INTEGER NOT NULL
     )
   `);
+
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS workspace_templates (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'custom',
+      description TEXT NOT NULL DEFAULT '',
+      body TEXT NOT NULL,
+      builtin INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS workspace_archive (
+      task_id TEXT PRIMARY KEY,
+      archived_at INTEGER NOT NULL
+    )
+  `);
+
+  // Seed built-in templates on first init
+  const count = d.prepare(`SELECT COUNT(*) AS n FROM workspace_templates WHERE builtin = 1`).get() as { n: number };
+  if (count.n === 0) seedBuiltinTemplates();
 }
 
 // ---- Per-project memory (CLAUDE.md auto-injection) ----
@@ -151,58 +175,101 @@ export function unpinAll(): { ok: boolean } {
 
 // ---- Vibe templates (static catalog) ----
 
-export interface VibeTemplate { id: string; name: string; category: string; description: string; body: string }
-export const TEMPLATES: VibeTemplate[] = [
-  {
-    id: 'next-page',
-    name: 'New Next.js page',
-    category: 'web',
-    description: 'Scaffold a route + page component + tests.',
-    body: 'Add a new Next.js page at app/<PATH>/page.tsx. Use server components. Read styling from existing pages. Add a smoke test in __tests__/.',
-  },
-  {
-    id: 'fix-bug',
-    name: 'Fix a specific bug',
-    category: 'general',
-    description: 'Diagnose + minimal-diff fix.',
-    body: 'There is a bug: <DESCRIBE>. Investigate root cause, then apply the minimal fix. Add a regression test if there is a test harness.',
-  },
-  {
-    id: 'add-tests',
-    name: 'Add tests for a module',
-    category: 'general',
-    description: 'Cover untested paths in a target file.',
-    body: 'Add tests for <FILE>. Use the existing test framework (detect from package.json or pyproject). Cover the public functions, happy path + at least one error case each.',
-  },
-  {
-    id: 'refactor',
-    name: 'Refactor without behavior change',
-    category: 'general',
-    description: 'Clean up a file/function in place.',
-    body: 'Refactor <FILE> to <GOAL — e.g. extract pure helpers, reduce nesting, remove dead code>. Behavior must not change; preserve every public signature and existing test result.',
-  },
-  {
-    id: 'swift-view',
-    name: 'New SwiftUI view',
-    category: 'swift',
-    description: 'Margin-style minimalist Apple view.',
-    body: 'Add a new SwiftUI view named <NAME> in the MarginUI module. Follow the project conventions (12pt corner radius, hairline borders, SF Pro text). Add a #Preview.',
-  },
-  {
-    id: 'design-pass',
-    name: 'Design polish pass',
-    category: 'design',
-    description: 'Apple-minimalist tightening pass.',
-    body: 'Do a polish pass on <SCOPE>. Standardize on 8/12/16/24/32/48 spacing, 12px radii, hairline borders, no movement on hover (only bg swaps). Match Apple HIG.',
-  },
-  {
-    id: 'doc-readme',
-    name: 'Write/update README',
-    category: 'general',
-    description: 'Crisp README for the project.',
-    body: 'Write or refresh README.md. Sections: one-line description, install, run dev, run tests, deploy, project layout. Read package.json or pyproject.toml for the actual scripts.',
-  },
+export interface VibeTemplate {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  body: string;
+  builtin?: boolean;
+  created_at?: number;
+  updated_at?: number;
+}
+
+const BUILTIN_TEMPLATES: Omit<VibeTemplate, 'created_at' | 'updated_at' | 'builtin'>[] = [
+  { id: 'next-page', name: 'New Next.js page', category: 'web', description: 'Scaffold a route + page component + tests.',
+    body: 'Add a new Next.js page at app/<PATH>/page.tsx. Use server components. Read styling from existing pages. Add a smoke test in __tests__/.' },
+  { id: 'fix-bug', name: 'Fix a specific bug', category: 'general', description: 'Diagnose + minimal-diff fix.',
+    body: 'There is a bug: <DESCRIBE>. Investigate root cause, then apply the minimal fix. Add a regression test if there is a test harness.' },
+  { id: 'add-tests', name: 'Add tests for a module', category: 'general', description: 'Cover untested paths in a target file.',
+    body: 'Add tests for <FILE>. Use the existing test framework (detect from package.json or pyproject). Cover the public functions, happy path + at least one error case each.' },
+  { id: 'refactor', name: 'Refactor without behavior change', category: 'general', description: 'Clean up a file/function in place.',
+    body: 'Refactor <FILE> to <GOAL — e.g. extract pure helpers, reduce nesting, remove dead code>. Behavior must not change; preserve every public signature and existing test result.' },
+  { id: 'swift-view', name: 'New SwiftUI view', category: 'swift', description: 'Margin-style minimalist Apple view.',
+    body: 'Add a new SwiftUI view named <NAME> in the MarginUI module. Follow the project conventions (12pt corner radius, hairline borders, SF Pro text). Add a #Preview.' },
+  { id: 'design-pass', name: 'Design polish pass', category: 'design', description: 'Apple-minimalist tightening pass.',
+    body: 'Do a polish pass on <SCOPE>. Standardize on 8/12/16/24/32/48 spacing, 12px radii, hairline borders, no movement on hover (only bg swaps). Match Apple HIG.' },
+  { id: 'doc-readme', name: 'Write/update README', category: 'general', description: 'Crisp README for the project.',
+    body: 'Write or refresh README.md. Sections: one-line description, install, run dev, run tests, deploy, project layout. Read package.json or pyproject.toml for the actual scripts.' },
 ];
+
+function seedBuiltinTemplates(): void {
+  const d = getDB();
+  const now = Date.now();
+  const stmt = d.prepare(`
+    INSERT OR REPLACE INTO workspace_templates
+      (id, name, category, description, body, builtin, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+  `);
+  for (const t of BUILTIN_TEMPLATES) {
+    stmt.run(t.id, t.name, t.category, t.description, t.body, now, now);
+  }
+}
+
+export function listTemplates(): VibeTemplate[] {
+  const d = getDB();
+  const rows = d.prepare(`
+    SELECT id, name, category, description, body, builtin, created_at, updated_at
+    FROM workspace_templates
+    ORDER BY builtin DESC, name ASC
+  `).all() as any[];
+  return rows.map(r => ({ ...r, builtin: !!r.builtin }));
+}
+
+export function createTemplate(input: { name: string; category?: string; description?: string; body: string }): { ok: boolean; template?: VibeTemplate; error?: string } {
+  if (!input.name?.trim()) return { ok: false, error: 'name required' };
+  if (!input.body?.trim()) return { ok: false, error: 'body required' };
+  const d = getDB();
+  const id = `t-${randomUUID().slice(0, 8)}`;
+  const now = Date.now();
+  d.prepare(`
+    INSERT INTO workspace_templates (id, name, category, description, body, builtin, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+  `).run(id, input.name.trim(), (input.category || 'custom').trim(), (input.description || '').trim(), input.body.trim(), now, now);
+  const row = d.prepare(`SELECT * FROM workspace_templates WHERE id = ?`).get(id) as any;
+  return { ok: true, template: { ...row, builtin: !!row.builtin } };
+}
+
+export function updateTemplate(id: string, input: { name?: string; category?: string; description?: string; body?: string }): { ok: boolean; error?: string } {
+  const d = getDB();
+  const row = d.prepare(`SELECT builtin FROM workspace_templates WHERE id = ?`).get(id) as any;
+  if (!row) return { ok: false, error: 'template not found' };
+  if (row.builtin) return { ok: false, error: 'built-in templates are read-only' };
+  const fields: string[] = [];
+  const args: any[] = [];
+  for (const [k, v] of Object.entries(input)) {
+    if (v == null) continue;
+    fields.push(`${k} = ?`);
+    args.push(String(v).trim());
+  }
+  if (!fields.length) return { ok: true };
+  fields.push(`updated_at = ?`);
+  args.push(Date.now(), id);
+  d.prepare(`UPDATE workspace_templates SET ${fields.join(', ')} WHERE id = ?`).run(...args);
+  return { ok: true };
+}
+
+export function deleteTemplate(id: string): { ok: boolean; error?: string } {
+  const d = getDB();
+  const row = d.prepare(`SELECT builtin FROM workspace_templates WHERE id = ?`).get(id) as any;
+  if (!row) return { ok: false, error: 'template not found' };
+  if (row.builtin) return { ok: false, error: 'built-in templates are read-only' };
+  d.prepare(`DELETE FROM workspace_templates WHERE id = ?`).run(id);
+  return { ok: true };
+}
+
+// Kept for back-compat with index.ts import. Now hydrated from DB.
+export const TEMPLATES: VibeTemplate[] = [];
 
 // ---- Cost capture from claude stream-json ----
 
@@ -365,7 +432,7 @@ export interface WorkspaceTask {
   prompt: string;
   model: string;
   mode: 'safe' | 'auto';
-  status: 'backlog' | 'running' | 'review' | 'done' | 'failed';
+  status: 'backlog' | 'queued' | 'running' | 'review' | 'done' | 'failed';
   pid: number | null;
   exit_code: number | null;
   created_at: number;
@@ -383,17 +450,49 @@ export interface WorkspaceTask {
   project_path?: string;
 }
 
-export function listTasks(opts: { projectId?: string } = {}): WorkspaceTask[] {
+const ARCHIVE_TTL_MS = 24 * 60 * 60 * 1000;
+
+export function listTasks(opts: { projectId?: string; includeArchived?: boolean } = {}): WorkspaceTask[] {
   const d = getDB();
   let sql = `
     SELECT t.*, p.name AS project_name, p.path AS project_path
     FROM workspace_tasks t
     JOIN workspace_projects p ON p.id = t.project_id
+    LEFT JOIN workspace_archive a ON a.task_id = t.id
+    WHERE 1=1
   `;
   const args: any[] = [];
-  if (opts.projectId) { sql += ` WHERE t.project_id = ?`; args.push(opts.projectId); }
+  if (!opts.includeArchived) sql += ` AND a.task_id IS NULL`;
+  if (opts.projectId) { sql += ` AND t.project_id = ?`; args.push(opts.projectId); }
   sql += ` ORDER BY t.created_at DESC LIMIT 500`;
   return d.prepare(sql).all(...args) as WorkspaceTask[];
+}
+
+export function archiveTask(id: string): { ok: boolean; error?: string } {
+  const d = getDB();
+  d.prepare(`INSERT OR IGNORE INTO workspace_archive (task_id, archived_at) VALUES (?, ?)`).run(id, Date.now());
+  d.prepare(`DELETE FROM workspace_pins WHERE task_id = ?`).run(id);
+  return { ok: true };
+}
+
+export function archiveDoneTasks(opts: { projectId?: string; olderThanMs?: number } = {}): { archived: number } {
+  const d = getDB();
+  const cutoff = Date.now() - (opts.olderThanMs ?? 0);
+  let sql = `
+    SELECT t.id FROM workspace_tasks t
+    LEFT JOIN workspace_archive a ON a.task_id = t.id
+    WHERE t.status = 'done' AND a.task_id IS NULL AND t.finished_at <= ?
+  `;
+  const args: any[] = [cutoff];
+  if (opts.projectId) { sql += ` AND t.project_id = ?`; args.push(opts.projectId); }
+  const rows = d.prepare(sql).all(...args) as any[];
+  for (const r of rows) archiveTask(r.id);
+  return { archived: rows.length };
+}
+
+// Auto-archive sweep: done tasks older than 24h.
+export function autoArchiveSweep(): { archived: number } {
+  return archiveDoneTasks({ olderThanMs: ARCHIVE_TTL_MS });
 }
 
 export function getTask(id: string): WorkspaceTask | null {
@@ -457,7 +556,7 @@ export function followUpTask(parentId: string, prompt: string): { ok: boolean; t
 }
 
 export function moveTask(id: string, status: WorkspaceTask['status']): { ok: boolean; error?: string } {
-  const valid = ['backlog', 'running', 'review', 'done', 'failed'];
+  const valid = ['backlog', 'queued', 'running', 'review', 'done', 'failed'];
   if (!valid.includes(status)) return { ok: false, error: 'invalid status' };
   const d = getDB();
   const task = getTask(id);
@@ -499,11 +598,42 @@ interface LiveProc {
 }
 const liveProcs = new Map<string, LiveProc>();
 
+// Bounded concurrency: prevent runaway parallel Claude spawns from
+// pegging the subscription / disk. Queue overflow.
+const MAX_CONCURRENT_SPAWNS = parseInt(process.env.WORKSPACE_MAX_CONCURRENT || '4', 10);
+const spawnQueue: string[] = [];
+
 type BroadcastFn = (msg: { type: string; data: any }) => void;
 let broadcast: BroadcastFn = () => {};
 export function setBroadcast(fn: BroadcastFn): void { broadcast = fn; }
 
-export function spawnTask(id: string): { ok: boolean; pid?: number; error?: string } {
+function tryDrainSpawnQueue(): void {
+  while (liveProcs.size < MAX_CONCURRENT_SPAWNS && spawnQueue.length > 0) {
+    const id = spawnQueue.shift()!;
+    const t = getTask(id);
+    if (!t || t.status !== 'queued') continue;
+    // Reset to backlog briefly then spawn (spawnTask checks for !running)
+    const d = getDB();
+    d.prepare(`UPDATE workspace_tasks SET status = 'backlog' WHERE id = ?`).run(id);
+    spawnTaskNow(id);
+  }
+}
+
+export function spawnTask(id: string): { ok: boolean; pid?: number; error?: string; queued?: boolean } {
+  if (liveProcs.size >= MAX_CONCURRENT_SPAWNS) {
+    const t = getTask(id);
+    if (!t) return { ok: false, error: 'task not found' };
+    if (t.status === 'running' || t.status === 'queued') return { ok: false, error: `already ${t.status}` };
+    const d = getDB();
+    d.prepare(`UPDATE workspace_tasks SET status = 'queued' WHERE id = ?`).run(id);
+    spawnQueue.push(id);
+    broadcast({ type: 'workspace.task', data: { taskId: id, status: 'queued' } });
+    return { ok: true, queued: true };
+  }
+  return spawnTaskNow(id);
+}
+
+function spawnTaskNow(id: string): { ok: boolean; pid?: number; error?: string } {
   const task = getTask(id);
   if (!task) return { ok: false, error: 'task not found' };
   if (task.status === 'running') return { ok: false, error: 'already running' };
@@ -721,6 +851,8 @@ export function spawnTask(id: string): { ok: boolean; pid?: number; error?: stri
       type: 'workspace.task',
       data: { taskId: id, status: nextStatus, exit_code: exitCode, cost_usd: cost?.cost_usd, session_id: sessionId },
     });
+    // Drain the spawn queue now that a slot freed up
+    tryDrainSpawnQueue();
   });
 
   child.on('error', (err) => {

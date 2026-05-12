@@ -57,6 +57,7 @@ const dragOver = ref<string | null>(null);
 
 function tasksFor(status: string): WSTask[] {
   if (status === 'review') return props.tasks.filter(t => t.status === 'review' || t.status === 'failed');
+  if (status === 'running') return props.tasks.filter(t => t.status === 'running' || t.status === 'queued');
   return props.tasks.filter(t => t.status === status);
 }
 function countFor(status: string): number {

@@ -6,7 +6,11 @@
         <span class="ws-page__eyebrow">Atlas · Workspace</span>
         <h1 class="ws-page__title">Vibe kanban</h1>
       </div>
-      <button class="ws-page__add" @click="newTaskOpen = true" :disabled="!projects.length">+ New task</button>
+      <div class="ws-page__head-actions">
+        <button class="ws-page__action" @click="templatesOpen = true" title="Manage templates">⋯ Templates</button>
+        <button class="ws-page__action" @click="onArchiveDone" :disabled="!projects.length" title="Archive done tasks for the active project">📦 Archive done</button>
+        <button class="ws-page__add" @click="newTaskOpen = true" :disabled="!projects.length">+ New task</button>
+      </div>
     </header>
 
     <main class="ws-page__body">
@@ -85,6 +89,15 @@
       @close="memoryFor = null"
     />
 
+    <TemplatesDialog
+      v-if="templatesOpen"
+      :templates="templates"
+      :create="createTemplate"
+      :update="updateTemplate"
+      :remove="deleteTemplate"
+      @close="templatesOpen = false"
+    />
+
     <TaskDetailDrawer
       v-if="openTask"
       :task="openTask"
@@ -126,6 +139,7 @@ import TaskDetailDrawer from '../components/workspace/TaskDetailDrawer.vue';
 import PaneGrid from '../components/workspace/PaneGrid.vue';
 import BroadcastDock from '../components/workspace/BroadcastDock.vue';
 import ProjectMemoryDialog from '../components/workspace/ProjectMemoryDialog.vue';
+import TemplatesDialog from '../components/workspace/TemplatesDialog.vue';
 
 defineEmits<{ (e: 'close'): void }>();
 
@@ -135,7 +149,24 @@ const {
   pinTaskRemote, unpinTaskRemote, unpinAllRemote,
   getProjectMemory, setProjectMemory,
   followUpTask,
+  createTemplate, updateTemplate, deleteTemplate,
+  archiveDone,
 } = useWorkspace();
+
+const templatesOpen = ref(false);
+
+async function onArchiveDone() {
+  if (!activeProject.value) return;
+  const proj = projects.value.find(p => p.id === activeProject.value);
+  if (!proj) return;
+  const n = proj.task_counts?.done || 0;
+  if (n === 0) { alert('No done tasks to archive in this project.'); return; }
+  if (!confirm(`Archive ${n} done task(s) in ${proj.name}?`)) return;
+  try {
+    const r = await archiveDone(activeProject.value);
+    if (r.archived === 0) alert('Nothing to archive.');
+  } catch (e: any) { alert(e.message); }
+}
 
 // ---- Pin state (server-persisted) ----
 const MAX_PINS = 8;
@@ -351,6 +382,22 @@ async function onDelete(t: WSTask) {
   letter-spacing: -0.01em;
   color: var(--atlas-text-strong);
 }
+
+.ws-page__head-actions {
+  display: flex; align-items: center; gap: 10px;
+}
+.ws-page__action {
+  background: transparent;
+  border: 1px solid var(--atlas-hairline);
+  color: var(--atlas-text-secondary);
+  font-family: inherit;
+  font-size: 12.5px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.ws-page__action:hover:not(:disabled) { background: var(--atlas-card-bg); color: var(--atlas-text-primary); }
+.ws-page__action:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .ws-page__add {
   background: var(--atlas-blue);

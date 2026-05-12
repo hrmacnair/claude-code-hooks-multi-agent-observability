@@ -70,8 +70,14 @@ import {
   pinTask as pinWorkspaceTask,
   unpinTask as unpinWorkspaceTask,
   unpinAll as unpinAllWorkspace,
-  TEMPLATES as WORKSPACE_TEMPLATES,
   followUpTask as followUpWorkspaceTask,
+  listTemplates as listWorkspaceTemplates,
+  createTemplate as createWorkspaceTemplate,
+  updateTemplate as updateWorkspaceTemplate,
+  deleteTemplate as deleteWorkspaceTemplate,
+  archiveTask as archiveWorkspaceTask,
+  archiveDoneTasks as archiveDoneWorkspaceTasks,
+  autoArchiveSweep as autoArchiveWorkspaceSweep,
 } from './atlas-workspace';
 
 // Initialize database
@@ -86,6 +92,12 @@ setWorkspaceBroadcast((msg) => {
   const payload = JSON.stringify(msg);
   wsClients.forEach(c => { try { c.send(payload); } catch { wsClients.delete(c); } });
 });
+
+// Auto-archive sweep: done tasks older than 24h. Runs on boot and hourly.
+try { autoArchiveWorkspaceSweep(); } catch (err: any) { console.warn('[workspace] initial auto-archive failed:', err.message); }
+setInterval(() => {
+  try { autoArchiveWorkspaceSweep(); } catch (err: any) { console.warn('[workspace] auto-archive sweep failed:', err.message); }
+}, 60 * 60 * 1000);
 
 // --- Load Atlas bot env (router needs ANTHROPIC_API_KEY) ---
 try {
@@ -1531,7 +1543,8 @@ const server = Bun.serve({
     }
     if (url.pathname === '/api/atlas/workspace/tasks' && req.method === 'GET') {
       const projectId = url.searchParams.get('projectId') || undefined;
-      return new Response(JSON.stringify({ tasks: listWorkspaceTasks({ projectId }) }), {
+      const includeArchived = url.searchParams.get('archived') === '1';
+      return new Response(JSON.stringify({ tasks: listWorkspaceTasks({ projectId, includeArchived }) }), {
         headers: { ...headers, 'Content-Type': 'application/json' }
       });
     }
@@ -1632,7 +1645,53 @@ const server = Bun.serve({
       });
     }
     if (url.pathname === '/api/atlas/workspace/templates' && req.method === 'GET') {
-      return new Response(JSON.stringify({ templates: WORKSPACE_TEMPLATES }), {
+      return new Response(JSON.stringify({ templates: listWorkspaceTemplates() }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/workspace/templates' && req.method === 'POST') {
+      let body: any = {}; try { body = await req.json(); } catch {}
+      const r = createWorkspaceTemplate({
+        name: body.name || '',
+        category: body.category || 'custom',
+        description: body.description || '',
+        body: body.body || '',
+      });
+      return new Response(JSON.stringify(r), {
+        status: r.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    const wsTplMod = url.pathname.match(/^\/api\/atlas\/workspace\/templates\/([^\/]+)$/);
+    if (wsTplMod && req.method === 'PUT') {
+      let body: any = {}; try { body = await req.json(); } catch {}
+      const r = updateWorkspaceTemplate(wsTplMod[1], body);
+      return new Response(JSON.stringify(r), {
+        status: r.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (wsTplMod && req.method === 'DELETE') {
+      const r = deleteWorkspaceTemplate(wsTplMod[1]);
+      return new Response(JSON.stringify(r), {
+        status: r.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // Archive endpoints
+    const wsTaskArchive = url.pathname.match(/^\/api\/atlas\/workspace\/tasks\/([^\/]+)\/archive$/);
+    if (wsTaskArchive && req.method === 'POST') {
+      const r = archiveWorkspaceTask(wsTaskArchive[1]);
+      return new Response(JSON.stringify(r), {
+        status: r.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/workspace/archive/done' && req.method === 'POST') {
+      let body: any = {}; try { body = await req.json(); } catch {}
+      const r = archiveDoneWorkspaceTasks({ projectId: body.project_id });
+      return new Response(JSON.stringify({ ok: true, ...r }), {
         headers: { ...headers, 'Content-Type': 'application/json' }
       });
     }

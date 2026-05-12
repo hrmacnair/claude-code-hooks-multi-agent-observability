@@ -20,7 +20,7 @@ export interface WSTask {
   prompt: string;
   model: string;
   mode: 'safe' | 'auto';
-  status: 'backlog' | 'running' | 'review' | 'done' | 'failed';
+  status: 'backlog' | 'queued' | 'running' | 'review' | 'done' | 'failed';
   pid: number | null;
   exit_code: number | null;
   created_at: number;
@@ -39,6 +39,9 @@ export interface VibeTemplate {
   category: string;
   description: string;
   body: string;
+  builtin: boolean;
+  created_at?: number;
+  updated_at?: number;
 }
 
 export function useWorkspace() {
@@ -141,6 +144,45 @@ export function useWorkspace() {
     return r.log || '';
   }
 
+  async function createTemplate(input: { name: string; category?: string; description?: string; body: string }): Promise<VibeTemplate> {
+    const r = await fetch(`${API_BASE_URL}/api/atlas/workspace/templates`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }).then(r => r.json());
+    if (!r.ok) throw new Error(r.error || 'create template failed');
+    templates.value = [...templates.value, r.template];
+    return r.template as VibeTemplate;
+  }
+  async function updateTemplate(id: string, input: { name?: string; category?: string; description?: string; body?: string }): Promise<void> {
+    const r = await fetch(`${API_BASE_URL}/api/atlas/workspace/templates/${id}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }).then(r => r.json());
+    if (!r.ok) throw new Error(r.error || 'update template failed');
+    const idx = templates.value.findIndex(t => t.id === id);
+    if (idx >= 0) templates.value[idx] = { ...templates.value[idx], ...input };
+  }
+  async function deleteTemplate(id: string): Promise<void> {
+    const r = await fetch(`${API_BASE_URL}/api/atlas/workspace/templates/${id}`, {
+      method: 'DELETE',
+    }).then(r => r.json());
+    if (!r.ok) throw new Error(r.error || 'delete template failed');
+    templates.value = templates.value.filter(t => t.id !== id);
+  }
+  async function archiveTask(id: string): Promise<void> {
+    await fetch(`${API_BASE_URL}/api/atlas/workspace/tasks/${id}/archive`, { method: 'POST' });
+    tasks.value = tasks.value.filter(t => t.id !== id);
+    pinnedIds.value = pinnedIds.value.filter(x => x !== id);
+  }
+  async function archiveDone(projectId?: string): Promise<{ archived: number }> {
+    const r = await fetch(`${API_BASE_URL}/api/atlas/workspace/archive/done`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(projectId ? { project_id: projectId } : {}),
+    }).then(r => r.json());
+    await refresh();
+    return r;
+  }
+
   async function followUpTask(parentId: string, prompt: string): Promise<WSTask> {
     const r = await fetch(`${API_BASE_URL}/api/atlas/workspace/tasks/${parentId}/follow-up`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -208,5 +250,7 @@ export function useWorkspace() {
     pinTaskRemote, unpinTaskRemote, unpinAllRemote,
     getProjectMemory, setProjectMemory,
     followUpTask,
+    createTemplate, updateTemplate, deleteTemplate,
+    archiveTask, archiveDone,
   };
 }
