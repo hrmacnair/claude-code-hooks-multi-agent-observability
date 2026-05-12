@@ -338,7 +338,15 @@ async function onCreateTask(payload: any, runImmediately: boolean) {
 }
 
 async function onSpawn(t: WSTask) {
-  try { await taskAction(t.id, 'spawn'); } catch (e: any) { alert(e.message); }
+  try {
+    await taskAction(t.id, 'spawn');
+    // Auto-pin so a TerminalPane surfaces at the bottom for the new run.
+    // PaneGrid only renders pinned tasks; without this, Run spawns the
+    // process but the operator sees nothing. Capped at MAX_PINS.
+    if (!pinnedIds.value.includes(t.id) && pinnedIds.value.length < MAX_PINS) {
+      try { await pinTaskRemote(t.id); } catch {}
+    }
+  } catch (e: any) { alert(e.message); }
 }
 async function onKill(t: WSTask) {
   if (!confirm(`Kill "${t.title}"?`)) return;

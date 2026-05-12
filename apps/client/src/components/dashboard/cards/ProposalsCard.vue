@@ -40,7 +40,7 @@
           <span class="row__agent">@{{ p.proposer_agent }}</span>
           <span class="row__id">{{ shortId(p.id) }}</span>
         </header>
-        <p class="row__rationale">{{ p.rationale_preview }}</p>
+        <p v-if="openId === p.id" class="row__rationale">{{ p.rationale_preview }}</p>
 
         <div v-if="openId === p.id" class="row__details">
           <pre v-if="p.diff_preview" class="row__diff">{{ p.diff_preview }}</pre>
@@ -246,7 +246,13 @@ async function onSaveEdit(p: any) {
   background: rgba(255, 90, 90, 0.12); color: #ff8a8a;
 }
 .proposals__empty { color: var(--atlas-text-muted); font-size: 13px; margin: 6px 0 0; }
-.proposals__list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.proposals__list {
+  list-style: none; padding: 0; margin: 0;
+  display: flex; flex-direction: column; gap: 4px;
+  max-height: 320px; overflow-y: auto;
+  /* Pad right so scrollbar doesn't sit on top of rows. */
+  padding-right: 4px;
+}
 
 .row {
   border: 1px solid var(--atlas-border-subtle);
