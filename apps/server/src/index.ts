@@ -20,6 +20,10 @@ import {
   editProposal,
 } from './atlas-proposals';
 import {
+  retryScheduledJob,
+  abandonScheduledJob,
+} from './atlas-scheduler-ops';
+import {
   getToday,
   addOperatorItem,
   markDone,
@@ -1202,6 +1206,25 @@ const server = Bun.serve({
       return new Response(JSON.stringify(result), {
         status: result.ok ? 200 : 400,
         headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // POST /api/atlas/scheduler/{retry,abandon}/:division/:jobId — Layer 5c
+    const schedOp = url.pathname.match(/^\/api\/atlas\/scheduler\/(retry|abandon)\/([^\/]+)\/([^\/]+)$/);
+    if (schedOp && req.method === 'POST') {
+      const op = schedOp[1] as 'retry' | 'abandon';
+      const division = decodeURIComponent(schedOp[2]);
+      const jobId = decodeURIComponent(schedOp[3]);
+      let body: any = {};
+      try { body = await req.json(); } catch {}
+      const approver = body.approver || 'operator';
+      const surface = body.surface || 'dashboard';
+      const result = op === 'retry'
+        ? retryScheduledJob(division, jobId, approver, surface)
+        : abandonScheduledJob(division, jobId, approver, surface);
+      return new Response(JSON.stringify(result), {
+        status: result.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' },
       });
     }
 
