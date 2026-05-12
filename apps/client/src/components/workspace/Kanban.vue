@@ -1,6 +1,14 @@
 <template>
   <div class="kanban">
-    <section v-for="col in COLUMNS" :key="col.key" class="kanban__col">
+    <section
+      v-for="col in COLUMNS"
+      :key="col.key"
+      class="kanban__col"
+      :class="{ 'is-drop-target': dragOver === col.key }"
+      @dragover.prevent="onDragOver(col.key, $event)"
+      @dragleave="onDragLeave(col.key)"
+      @drop.prevent="onDrop(col.key, $event)"
+    >
       <header class="kanban__col-head">
         <span class="kanban__col-name">{{ col.name }}</span>
         <span class="kanban__col-count">{{ countFor(col.key) }}</span>
@@ -10,15 +18,17 @@
           v-for="t in tasksFor(col.key)"
           :key="t.id"
           :task="t"
+          :pinned="pinnedIds.includes(t.id)"
           @open="(t) => $emit('open', t)"
           @spawn="(t) => $emit('spawn', t)"
           @kill="(t) => $emit('kill', t)"
           @done="(t) => $emit('done', t)"
           @delete="(t) => $emit('delete', t)"
+          @toggle-pin="(t) => $emit('toggle-pin', t)"
         />
         <div v-if="tasksFor(col.key).length === 0" class="kanban__empty">
-          <span v-if="col.key === 'backlog'">No tasks. Add one.</span>
-          <span v-else>—</span>
+          <span v-if="col.key === 'backlog'">No tasks. Drop or add one.</span>
+          <span v-else>Drop here</span>
         </div>
       </div>
     </section>
@@ -26,12 +36,14 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue';
 import TaskCard from './TaskCard.vue';
 import type { WSTask } from '../../composables/useWorkspace';
 
-const props = defineProps<{ tasks: WSTask[] }>();
-defineEmits<{
-  (e: 'open' | 'spawn' | 'kill' | 'done' | 'delete', t: WSTask): void;
+const props = defineProps<{ tasks: WSTask[]; pinnedIds: string[] }>();
+const emit = defineEmits<{
+  (e: 'open' | 'spawn' | 'kill' | 'done' | 'delete' | 'toggle-pin', t: WSTask): void;
+  (e: 'drop-task', payload: { taskId: string; toColumn: string }): void;
 }>();
 
 const COLUMNS = [
@@ -41,13 +53,28 @@ const COLUMNS = [
   { key: 'done',    name: 'Done' },
 ] as const;
 
+const dragOver = ref<string | null>(null);
+
 function tasksFor(status: string): WSTask[] {
-  // Treat 'failed' as 'review' visually (they need human attention).
   if (status === 'review') return props.tasks.filter(t => t.status === 'review' || t.status === 'failed');
   return props.tasks.filter(t => t.status === status);
 }
 function countFor(status: string): number {
   return tasksFor(status).length;
+}
+
+function onDragOver(col: string, ev: DragEvent) {
+  if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+  dragOver.value = col;
+}
+function onDragLeave(col: string) {
+  if (dragOver.value === col) dragOver.value = null;
+}
+function onDrop(col: string, ev: DragEvent) {
+  dragOver.value = null;
+  const taskId = ev.dataTransfer?.getData('application/x-workspace-task');
+  if (!taskId) return;
+  emit('drop-task', { taskId, toColumn: col });
 }
 </script>
 
@@ -95,6 +122,13 @@ function countFor(status: string): number {
   border-radius: 12px;
   padding: 10px;
   min-height: 320px;
+  transition: background-color 100ms ease, outline-color 100ms ease;
+  outline: 2px dashed transparent;
+  outline-offset: -2px;
+}
+.kanban__col.is-drop-target .kanban__col-body {
+  background: rgba(94,158,255,0.08);
+  outline-color: var(--atlas-blue);
 }
 .kanban__empty {
   font-size: 12px;

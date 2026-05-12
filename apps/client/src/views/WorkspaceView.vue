@@ -35,11 +35,31 @@
       <Kanban
         v-else
         :tasks="visibleTasks"
+        :pinned-ids="pinnedIds"
         @open="(t) => openTask = t"
         @spawn="onSpawn"
         @kill="onKill"
         @done="onDone"
         @delete="onDelete"
+        @toggle-pin="onTogglePin"
+        @drop-task="onDropTask"
+      />
+
+      <PaneGrid
+        v-if="pinnedTasks.length > 0"
+        :pinned-tasks="pinnedTasks"
+        :live-logs="liveLogs"
+        @kill="onKill"
+        @rerun="onRerun"
+        @expand="(t) => openTask = t"
+        @unpin="onTogglePin"
+        @unpin-all="pinnedIds = []"
+      />
+
+      <BroadcastDock
+        v-if="projects.length > 0"
+        :candidates="pinnedTasks"
+        @broadcast="onBroadcast"
       />
     </main>
 
@@ -89,6 +109,8 @@ import { useWorkspace, type WSTask } from '../composables/useWorkspace';
 import Kanban from '../components/workspace/Kanban.vue';
 import NewTaskDialog from '../components/workspace/NewTaskDialog.vue';
 import TaskDetailDrawer from '../components/workspace/TaskDetailDrawer.vue';
+import PaneGrid from '../components/workspace/PaneGrid.vue';
+import BroadcastDock from '../components/workspace/BroadcastDock.vue';
 
 defineEmits<{ (e: 'close'): void }>();
 
@@ -96,6 +118,97 @@ const {
   projects, tasks, liveLogs,
   createProject, createTask, taskAction,
 } = useWorkspace();
+
+// ---- Pin state (client-only; reload-resets — fine for Phase 2) ----
+const MAX_PINS = 8;
+const pinnedIds = ref<string[]>([]);
+const pinnedTasks = computed(() =>
+  pinnedIds.value
+    .map(id => tasks.value.find(t => t.id === id))
+    .filter((t): t is WSTask => !!t)
+);
+
+function onTogglePin(t: WSTask) {
+  const i = pinnedIds.value.indexOf(t.id);
+  if (i >= 0) {
+    pinnedIds.value = pinnedIds.value.filter(id => id !== t.id);
+  } else {
+    if (pinnedIds.value.length >= MAX_PINS) {
+      alert(`Max ${MAX_PINS} pinned panes. Unpin one first.`);
+      return;
+    }
+    pinnedIds.value = [...pinnedIds.value, t.id];
+  }
+}
+
+async function onRerun(t: WSTask) {
+  // Create new task with same prompt + spawn
+  try {
+    const fresh = await createTask({
+      project_id: t.project_id,
+      title: t.title,
+      prompt: t.prompt,
+      model: t.model,
+      mode: t.mode,
+    });
+    await taskAction(fresh.id, 'spawn');
+    // Auto-pin: swap original pin to fresh
+    const i = pinnedIds.value.indexOf(t.id);
+    if (i >= 0) {
+      pinnedIds.value = pinnedIds.value.map(id => id === t.id ? fresh.id : id);
+    }
+  } catch (e: any) { alert('Re-run failed: ' + e.message); }
+}
+
+async function onDropTask(p: { taskId: string; toColumn: string }) {
+  const t = tasks.value.find(x => x.id === p.taskId);
+  if (!t) return;
+  // Backlog drop on running task = no-op (can't restart implicit). Running drop = error.
+  if (p.toColumn === 'running') {
+    if (t.status === 'backlog' || t.status === 'review' || t.status === 'failed' || t.status === 'done') {
+      // Spawn or re-spawn (re-run for terminal states)
+      if (t.status === 'backlog') {
+        await onSpawn(t);
+      } else {
+        await onRerun(t);
+      }
+    }
+    return;
+  }
+  if (p.toColumn === 'review' || p.toColumn === 'done' || p.toColumn === 'backlog') {
+    // Skip if already there or if currently running (must kill first)
+    if (t.status === 'running') { alert('Kill the task before moving.'); return; }
+    if (t.status === p.toColumn) return;
+    try {
+      await taskAction(t.id, 'move', { status: p.toColumn });
+      t.status = p.toColumn as any;
+    } catch (e: any) { alert(e.message); }
+  }
+}
+
+async function onBroadcast(payload: { prompt: string; titlePrefix: string; targetIds: string[] }) {
+  const targets = pinnedTasks.value.filter(t => payload.targetIds.includes(t.id));
+  if (!targets.length) return;
+  const newPins: string[] = [];
+  for (const t of targets) {
+    try {
+      const fresh = await createTask({
+        project_id: t.project_id,
+        title: `${payload.titlePrefix}: ${payload.prompt.slice(0, 40)}${payload.prompt.length > 40 ? '…' : ''}`,
+        prompt: payload.prompt,
+        model: t.model,
+        mode: t.mode,
+      });
+      await taskAction(fresh.id, 'spawn');
+      newPins.push(fresh.id);
+    } catch (e: any) {
+      console.error('[broadcast] fan-out failed for', t.id, e);
+    }
+  }
+  // Pin all fresh tasks (replacing any over-the-limit existing pins)
+  const combined = [...pinnedIds.value, ...newPins].slice(-MAX_PINS);
+  pinnedIds.value = [...new Set(combined)];
+}
 
 const activeProject = ref<string | null>(null);
 const newTaskOpen = ref(false);

@@ -1,0 +1,225 @@
+<template>
+  <article class="pane" :class="`pane--${task.status}`">
+    <header class="pane__head">
+      <div class="pane__title-block">
+        <span class="pane__model" :class="`pane__model--${task.model}`">{{ task.model }}</span>
+        <span class="pane__title" :title="task.title">{{ task.title }}</span>
+        <span class="pane__status">{{ task.status }}<span v-if="task.exit_code != null"> · exit {{ task.exit_code }}</span></span>
+      </div>
+      <div class="pane__actions">
+        <button v-if="task.status === 'running'" class="pane__btn pane__btn--danger" @click="$emit('kill', task)" title="Kill">■</button>
+        <button v-if="task.status === 'backlog' || task.status === 'failed' || task.status === 'review' || task.status === 'done'"
+                class="pane__btn" @click="$emit('rerun', task)" title="Re-run">↻</button>
+        <button class="pane__btn" @click="$emit('expand', task)" title="Expand">⤢</button>
+        <button class="pane__btn" @click="$emit('unpin', task)" title="Unpin">✕</button>
+      </div>
+    </header>
+    <div class="pane__body" ref="termHost"></div>
+  </article>
+</template>
+
+<script setup lang="ts">
+import { onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import '@xterm/xterm/css/xterm.css';
+import type { WSTask } from '../../composables/useWorkspace';
+import { API_BASE_URL } from '../../config';
+
+const props = defineProps<{ task: WSTask; liveLog: string }>();
+defineEmits<{
+  (e: 'kill' | 'rerun' | 'expand' | 'unpin', t: WSTask): void;
+}>();
+
+const termHost = ref<HTMLElement | null>(null);
+let term: Terminal | null = null;
+let fit: FitAddon | null = null;
+let lastLiveLength = 0;
+let resizeObs: ResizeObserver | null = null;
+
+const THEME = {
+  background: '#0c0c0c',
+  foreground: '#dadada',
+  cursor: '#dadada',
+  selectionBackground: '#264f78',
+  black: '#0c0c0c',
+  red: '#ff453a',
+  green: '#30d158',
+  yellow: '#ffd60a',
+  blue: '#5e9eff',
+  magenta: '#b96cff',
+  cyan: '#64d2ff',
+  white: '#dadada',
+  brightBlack: '#7d7d7d',
+  brightRed: '#ff6961',
+  brightGreen: '#5ce665',
+  brightYellow: '#ffe066',
+  brightBlue: '#7aaaff',
+  brightMagenta: '#cf8aff',
+  brightCyan: '#85e0ff',
+  brightWhite: '#ffffff',
+};
+
+onMounted(async () => {
+  if (!termHost.value) return;
+  term = new Terminal({
+    fontFamily: 'ui-monospace, Menlo, monospace',
+    fontSize: 11.5,
+    lineHeight: 1.25,
+    convertEol: true,
+    cursorBlink: false,
+    cursorStyle: 'bar',
+    scrollback: 5000,
+    theme: THEME,
+    allowProposedApi: true,
+  });
+  fit = new FitAddon();
+  term.loadAddon(fit);
+  term.open(termHost.value);
+  await nextTick();
+  try { fit.fit(); } catch { /* ignore */ }
+
+  // Resize fit on container size change
+  if (typeof ResizeObserver !== 'undefined') {
+    resizeObs = new ResizeObserver(() => { try { fit?.fit(); } catch {} });
+    resizeObs.observe(termHost.value);
+  }
+
+  // Initial log fetch
+  try {
+    const r = await fetch(`${API_BASE_URL}/api/atlas/workspace/tasks/${props.task.id}/log`).then(r => r.json());
+    if (r.log) term.write(r.log.replace(/\n/g, '\r\n'));
+  } catch { /* non-fatal */ }
+
+  // Replay any liveLog buffered before mount
+  if (props.liveLog) {
+    term.write(props.liveLog.replace(/\n/g, '\r\n'));
+    lastLiveLength = props.liveLog.length;
+  }
+});
+
+watch(() => props.liveLog, (val) => {
+  if (!term || !val) return;
+  if (val.length < lastLiveLength) {
+    // Buffer was trimmed (200kb rolling tail wrapped). Clear + rewrite.
+    term.clear();
+    term.write(val.replace(/\n/g, '\r\n'));
+  } else {
+    const delta = val.slice(lastLiveLength);
+    if (delta) term.write(delta.replace(/\n/g, '\r\n'));
+  }
+  lastLiveLength = val.length;
+});
+
+watch(() => props.task.id, () => {
+  // task swapped — reset
+  if (term) { term.clear(); }
+  lastLiveLength = 0;
+});
+
+onBeforeUnmount(() => {
+  resizeObs?.disconnect();
+  term?.dispose();
+});
+</script>
+
+<style scoped>
+.pane {
+  display: flex;
+  flex-direction: column;
+  background: #0c0c0c;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  min-height: 0;
+  transition: border-color 100ms ease;
+}
+.pane--running { border-color: var(--atlas-blue); }
+.pane--review  { border-color: var(--atlas-orange, #ff9f0a); }
+.pane--failed  { border-color: var(--atlas-red, #ff453a); }
+.pane--done    { opacity: 0.7; }
+
+.pane__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(255,255,255,0.04);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  min-height: 32px;
+}
+.pane__title-block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+.pane__model {
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.08);
+  color: #dadada;
+  flex: none;
+}
+.pane__model--opus   { background: rgba(185,108,255,0.18); color: #cf8aff; }
+.pane__model--sonnet { background: rgba(94,158,255,0.18); color: #7aaaff; }
+.pane__model--haiku  { background: rgba(138,211,167,0.18); color: #8ad3a7; }
+.pane__model--gpt5,
+.pane__model--gpt5-mini { background: rgba(16,163,127,0.18); color: #10a37f; }
+.pane__model--gemma  { background: rgba(255,125,77,0.18); color: #ff7d4d; }
+
+.pane__title {
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  color: #ededed;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.pane__status {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 10px;
+  color: #888;
+  flex: none;
+}
+
+.pane__actions {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+.pane__btn {
+  background: rgba(255,255,255,0.06);
+  border: none;
+  color: #dadada;
+  font-family: inherit;
+  font-size: 11px;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.pane__btn:hover { background: rgba(255,255,255,0.12); }
+.pane__btn--danger { color: #ff6961; }
+
+.pane__body {
+  flex: 1;
+  min-height: 180px;
+  padding: 6px 4px 6px 10px;
+}
+.pane__body :deep(.xterm) { height: 100%; }
+.pane__body :deep(.xterm-viewport) { background-color: transparent !important; }
+</style>

@@ -1,9 +1,17 @@
 <template>
-  <article class="ws-card" :class="`ws-card--${task.status}`" @click="$emit('open', task)">
+  <article
+    class="ws-card"
+    :class="[`ws-card--${task.status}`, { 'is-pinned': pinned, 'is-dragging': dragging }]"
+    draggable="true"
+    @click="$emit('open', task)"
+    @dragstart="onDragStart"
+    @dragend="onDragEnd"
+  >
     <header class="ws-card__head">
       <span class="ws-card__model" :class="`ws-card__model--${task.model}`">{{ task.model }}</span>
       <span v-if="task.mode === 'auto'" class="ws-card__mode" title="Bypass permissions">auto</span>
       <span v-if="task.pid" class="ws-card__pid">PID {{ task.pid }}</span>
+      <span v-if="pinned" class="ws-card__pin-flag" title="Pinned to pane grid">📌</span>
     </header>
     <h4 class="ws-card__title">{{ task.title }}</h4>
     <p class="ws-card__prompt">{{ task.prompt }}</p>
@@ -11,6 +19,9 @@
       <button v-if="task.status === 'backlog'" class="ws-card__btn ws-card__btn--primary" @click="$emit('spawn', task)">▶ Run</button>
       <button v-if="task.status === 'running'" class="ws-card__btn ws-card__btn--danger" @click="$emit('kill', task)">■ Kill</button>
       <button v-if="task.status === 'review'" class="ws-card__btn ws-card__btn--primary" @click="$emit('done', task)">✓ Done</button>
+      <button class="ws-card__btn ws-card__btn--ghost" @click="$emit('toggle-pin', task)" :title="pinned ? 'Unpin' : 'Pin to pane grid'">
+        {{ pinned ? '📌 Unpin' : '📌 Pin' }}
+      </button>
       <button v-if="['backlog','review','done','failed'].includes(task.status)" class="ws-card__btn ws-card__btn--ghost" @click="$emit('delete', task)">Delete</button>
       <span v-if="task.status === 'failed'" class="ws-card__exit">exit {{ task.exit_code }}</span>
     </footer>
@@ -18,15 +29,29 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue';
 import type { WSTask } from '../../composables/useWorkspace';
-defineProps<{ task: WSTask }>();
-defineEmits<{
+
+const props = defineProps<{ task: WSTask; pinned?: boolean }>();
+const emit = defineEmits<{
   (e: 'open', t: WSTask): void;
   (e: 'spawn', t: WSTask): void;
   (e: 'kill', t: WSTask): void;
   (e: 'done', t: WSTask): void;
   (e: 'delete', t: WSTask): void;
+  (e: 'toggle-pin', t: WSTask): void;
 }>();
+
+const dragging = ref(false);
+function onDragStart(ev: DragEvent) {
+  dragging.value = true;
+  if (ev.dataTransfer) {
+    ev.dataTransfer.effectAllowed = 'move';
+    ev.dataTransfer.setData('application/x-workspace-task', props.task.id);
+    ev.dataTransfer.setData('text/plain', props.task.id);
+  }
+}
+function onDragEnd() { dragging.value = false; }
 </script>
 
 <style scoped>
@@ -37,12 +62,17 @@ defineEmits<{
   display: flex;
   flex-direction: column;
   gap: 8px;
-  cursor: pointer;
+  cursor: grab;
   border-left: 3px solid transparent;
-  transition: background-color 100ms ease;
+  transition: background-color 100ms ease, opacity 100ms ease, transform 100ms ease;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
 }
 .ws-card:hover { background: var(--atlas-card-bg-2, rgba(127,127,127,0.06)); }
+.ws-card:active { cursor: grabbing; }
+.ws-card.is-dragging { opacity: 0.4; transform: scale(0.98); }
+.ws-card.is-pinned { background: linear-gradient(180deg, rgba(94,158,255,0.06), var(--atlas-card-bg)); }
+
+.ws-card__pin-flag { margin-left: auto; font-size: 11px; opacity: 0.7; }
 
 .ws-card--running { border-left-color: var(--atlas-blue); }
 .ws-card--review  { border-left-color: var(--atlas-orange, #ff9f0a); }
