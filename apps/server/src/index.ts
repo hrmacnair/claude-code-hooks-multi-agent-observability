@@ -50,12 +50,34 @@ import { analyzeDrift, getLatestDriftReport } from './atlas-drift';
 import { regenerateWhitepaper, whitepaperMeta } from './atlas-whitepaper';
 import { portabilityState, backupNow } from './atlas-portability';
 import { listMissions, getDivisionDetail, recentRoutingLog, recentCorrections, searchAudit, spendDetail, spendByModel, githubFeed, listAllAgents, generateSuggestions } from './atlas-views';
+import {
+  initWorkspaceTables,
+  setBroadcast as setWorkspaceBroadcast,
+  listProjects as listWorkspaceProjects,
+  createProject as createWorkspaceProject,
+  deleteProject as deleteWorkspaceProject,
+  listTasks as listWorkspaceTasks,
+  getTask as getWorkspaceTask,
+  createTask as createWorkspaceTask,
+  moveTask as moveWorkspaceTask,
+  deleteTask as deleteWorkspaceTask,
+  spawnTask as spawnWorkspaceTask,
+  killTask as killWorkspaceTask,
+  getTaskLog as getWorkspaceTaskLog,
+} from './atlas-workspace';
 
 // Initialize database
 initDatabase();
+initWorkspaceTables();
 
 // Store WebSocket clients
 const wsClients = new Set<any>();
+
+// Wire workspace broadcast → WS clients
+setWorkspaceBroadcast((msg) => {
+  const payload = JSON.stringify(msg);
+  wsClients.forEach(c => { try { c.send(payload); } catch { wsClients.delete(c); } });
+});
 
 // --- Load Atlas bot env (router needs ANTHROPIC_API_KEY) ---
 try {
@@ -1477,6 +1499,84 @@ const server = Bun.serve({
       });
     }
     
+    // ---- Atlas Workspace (Phase 1: kanban + spawn) ----
+    if (url.pathname === '/api/atlas/workspace/projects' && req.method === 'GET') {
+      return new Response(JSON.stringify({ projects: listWorkspaceProjects() }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/workspace/projects' && req.method === 'POST') {
+      let body: any = {}; try { body = await req.json(); } catch {}
+      const r = createWorkspaceProject(body.name || '', body.path || '');
+      return new Response(JSON.stringify(r), {
+        status: r.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    const wsProjDel = url.pathname.match(/^\/api\/atlas\/workspace\/projects\/([^\/]+)$/);
+    if (wsProjDel && req.method === 'DELETE') {
+      const r = deleteWorkspaceProject(wsProjDel[1]);
+      return new Response(JSON.stringify(r), {
+        status: r.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/workspace/tasks' && req.method === 'GET') {
+      const projectId = url.searchParams.get('projectId') || undefined;
+      return new Response(JSON.stringify({ tasks: listWorkspaceTasks({ projectId }) }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/workspace/tasks' && req.method === 'POST') {
+      let body: any = {}; try { body = await req.json(); } catch {}
+      const r = createWorkspaceTask({
+        project_id: body.project_id || body.projectId,
+        title: body.title || '',
+        prompt: body.prompt || '',
+        model: body.model || 'sonnet',
+        mode: body.mode === 'auto' ? 'auto' : 'safe',
+      });
+      return new Response(JSON.stringify(r), {
+        status: r.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    const wsTaskAction = url.pathname.match(/^\/api\/atlas\/workspace\/tasks\/([^\/]+)\/(spawn|kill|move|delete)$/);
+    if (wsTaskAction && req.method === 'POST') {
+      const id = wsTaskAction[1];
+      const action = wsTaskAction[2];
+      let body: any = {}; try { body = await req.json(); } catch {}
+      let r: { ok: boolean; error?: string; pid?: number };
+      if (action === 'spawn')       r = spawnWorkspaceTask(id);
+      else if (action === 'kill')   r = killWorkspaceTask(id);
+      else if (action === 'move')   r = moveWorkspaceTask(id, body.status);
+      else if (action === 'delete') r = deleteWorkspaceTask(id);
+      else                          r = { ok: false, error: 'unknown action' };
+      return new Response(JSON.stringify(r), {
+        status: r.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    const wsTaskGet = url.pathname.match(/^\/api\/atlas\/workspace\/tasks\/([^\/]+)$/);
+    if (wsTaskGet && req.method === 'GET') {
+      const t = getWorkspaceTask(wsTaskGet[1]);
+      if (!t) return new Response(JSON.stringify({ error: 'not found' }), {
+        status: 404, headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+      return new Response(JSON.stringify({ task: t }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    const wsTaskLog = url.pathname.match(/^\/api\/atlas\/workspace\/tasks\/([^\/]+)\/log$/);
+    if (wsTaskLog && req.method === 'GET') {
+      const tail = parseInt(url.searchParams.get('tail') || '200000');
+      const r = await getWorkspaceTaskLog(wsTaskLog[1], { tail });
+      return new Response(JSON.stringify(r), {
+        status: r.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
     // WebSocket upgrade
     if (url.pathname === '/stream') {
       const success = server.upgrade(req);

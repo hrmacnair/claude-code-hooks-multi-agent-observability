@@ -1,92 +1,93 @@
 <template>
-  <div class="atlas-page" v-show="!readingBrief && !talkFullscreen">
-    <WordmarkRow />
+  <div class="atlas-page" v-show="!readingBrief && !talkFullscreen && !workspaceOpen">
+    <WordmarkRow @open-workspace="workspaceOpen = true" />
     <div class="atlas-page__divider"></div>
     <StatusRow />
     <div class="atlas-page__divider"></div>
 
-    <!-- KPI tile strip — 6 small cards across the top. -->
-    <section class="atlas-page__tiles" id="tiles">
-      <StatTile
-        label="Spend"
-        :value="`$${todayDollars}`"
-        :sub="`${monthDollars}/mo · proj ${spendProjection}`"
-        :trend="spendTrend"
-        :tone="budgetTone"
-        clickable
-        hint="Click for spend detail"
-        @click="spendOpen = true"
-      />
-      <StatTile
-        label="Services"
-        :value="serviceCount"
-        :sub="serviceSub"
-        :dot="serviceDot"
-        :tone="serviceTone"
-      />
-      <StatTile
-        label="Drift"
-        :value="driftValue"
-        :sub="driftSub"
-        :tone="driftTone"
-        :dot="driftDot"
-        clickable
-        @click="runDriftScan"
-      />
-      <StatTile
-        label="Missions"
-        :value="missionCount"
-        :sub="missionSub"
-        :tone="missionCount > 0 ? 'info' : 'neutral'"
-      />
-      <StatTile
-        label="Scout"
-        :value="scoutCount"
-        :sub="scoutSub"
-        :tone="scoutCount > 0 ? 'good' : 'neutral'"
-      />
-      <StatTile
-        label="GitHub"
-        :value="ghCount"
-        :sub="ghSub"
-      />
-    </section>
+    <!-- Two-column page: main work on the left, brief anchors the right. -->
+    <main class="atlas-page__grid">
+      <section class="atlas-page__main">
+        <!-- KPI tile strip — 6 small cards across the top of the work column. -->
+        <div class="atlas-page__tiles" id="tiles">
+          <StatTile
+            label="Spend"
+            :value="`$${todayDollars}`"
+            :sub="`${monthDollars} mo · ${spendProjection} proj`"
+            :trend="spendTrend"
+            :tone="budgetTone"
+            clickable
+            hint="Click for spend detail"
+            @click="spendOpen = true"
+          />
+          <StatTile
+            label="Services"
+            :value="serviceCount"
+            :sub="serviceSub"
+            :dot="serviceDot"
+            :tone="serviceTone"
+          />
+          <StatTile
+            label="Drift"
+            :value="driftValue"
+            :sub="driftSub"
+            :tone="driftTone"
+            :dot="driftDot"
+            clickable
+            @click="runDriftScan"
+          />
+          <StatTile
+            label="Missions"
+            :value="missionCount"
+            :sub="missionSub"
+            :tone="missionCount > 0 ? 'info' : 'neutral'"
+          />
+          <StatTile
+            label="Scout"
+            :value="scoutCount"
+            :sub="scoutSub"
+            :tone="scoutCount > 0 ? 'good' : 'neutral'"
+          />
+          <StatTile
+            label="GitHub"
+            :value="ghCount"
+            :sub="ghSub"
+          />
+        </div>
 
-    <!-- Talk + Today side-by-side (medium cards, interactive). -->
-    <section class="atlas-page__row atlas-page__row--primary">
-      <TalkCard :compact="isCompact" @open-fullscreen="talkFullscreen = true" />
-      <TodayCard />
-    </section>
+        <!-- Talk + Today side-by-side. -->
+        <div class="atlas-page__row atlas-page__row--primary">
+          <TalkCard :compact="isCompact" @open-fullscreen="talkFullscreen = true" />
+          <TodayCard />
+        </div>
 
-    <!-- Brief — full width but compact. -->
-    <section class="atlas-page__row atlas-page__row--brief" id="brief">
-      <TodaysBriefCard :compact="isCompact" @open-full="onOpenFull" />
-    </section>
+        <!-- Per-division tiles — 3 across, health pulse + key metrics. -->
+        <div class="atlas-page__tiles atlas-page__tiles--divisions">
+          <DivisionTile
+            v-for="d in divisionRows"
+            :key="d.slug"
+            :name="d.slug"
+            :health="d.health"
+            :events24h="d.events24h"
+            :active-missions="d.activeMissions"
+            :last-action-ago="d.lastActionAgo"
+            :last-summary="d.lastSummary"
+            @open="divisionDrawer = d.slug"
+          />
+        </div>
 
-    <!-- Per-division tiles — 3 across, health pulse + key metrics. -->
-    <section class="atlas-page__tiles atlas-page__tiles--divisions">
-      <DivisionTile
-        v-for="d in divisionRows"
-        :key="d.slug"
-        :name="d.slug"
-        :health="d.health"
-        :events24h="d.events24h"
-        :active-missions="d.activeMissions"
-        :last-action-ago="d.lastActionAgo"
-        :last-summary="d.lastSummary"
-        @open="divisionDrawer = d.slug"
-      />
-    </section>
+        <!-- Work card (tabs: Missions / Projects / Agents / Scout / Routing / GitHub) -->
+        <WorkCard :events="events" @open-division="(slug) => divisionDrawer = slug" />
 
-    <!-- Work card (tabs: Missions / Projects / Agents / Scout / Routing / GitHub) -->
-    <section class="atlas-page__row">
-      <WorkCard :events="events" @open-division="(slug) => divisionDrawer = slug" />
-    </section>
+        <!-- Activity strip (collapsed) -->
+        <LiveActivityCard :events="events" @view-all="liveAllOpen = true" @open-search="auditOpen = true" />
+      </section>
 
-    <!-- Activity strip (collapsed) -->
-    <section class="atlas-page__row">
-      <LiveActivityCard :events="events" @view-all="liveAllOpen = true" @open-search="auditOpen = true" />
-    </section>
+      <!-- Right column — Brief anchors the editorial side of the page. -->
+      <aside class="atlas-page__aside" id="brief">
+        <TodaysBriefCard :compact="isCompact" @open-full="onOpenFull" />
+      </aside>
+    </main>
 
     <p v-if="error" class="atlas-page__error">{{ error }}</p>
   </div>
@@ -100,6 +101,11 @@
   <TalkFullscreen
     v-if="talkFullscreen"
     @close="talkFullscreen = false"
+  />
+
+  <WorkspaceView
+    v-if="workspaceOpen"
+    @close="workspaceOpen = false"
   />
 
   <LiveActivityModal
@@ -135,6 +141,7 @@ import AuditSearchModal from './components/dashboard/AuditSearchModal.vue';
 import { useNotifications } from './composables/useNotifications';
 import BriefReadingView from './views/BriefReadingView.vue';
 import TalkFullscreen from './views/TalkFullscreen.vue';
+import WorkspaceView from './views/WorkspaceView.vue';
 import LiveActivityModal from './components/dashboard/LiveActivityModal.vue';
 import { WS_URL } from './config';
 
@@ -154,6 +161,7 @@ onUnmounted(() => window.removeEventListener('resize', recomputeCompact));
 
 const readingBrief = ref<any>(null);
 const talkFullscreen = ref(false);
+const workspaceOpen = ref(false);
 const liveAllOpen = ref(false);
 const spendOpen = ref(false);
 const auditOpen = ref(false);
@@ -346,43 +354,63 @@ const divisionRows = computed(() => {
 }
 @media (max-width: 1023px) { .atlas-page__divider { margin: 0 24px; } }
 
+/* ---- Page-level 2-column grid: work column | brief column ---- */
+.atlas-page__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 580px;
+  gap: 32px;
+  padding: 24px 48px 48px;
+  align-items: start;
+}
+@media (max-width: 1439px) {
+  .atlas-page__grid { grid-template-columns: minmax(0, 1fr) 520px; gap: 28px; padding: 20px 40px 40px; }
+}
+@media (max-width: 1279px) {
+  .atlas-page__grid { grid-template-columns: minmax(0, 1fr) 440px; gap: 24px; padding: 20px 32px 40px; }
+}
+@media (max-width: 1023px) {
+  .atlas-page__grid { grid-template-columns: 1fr; gap: 16px; padding: 16px 24px 40px; }
+}
+
+.atlas-page__main {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+}
+.atlas-page__aside {
+  position: sticky;
+  top: 24px;
+  min-width: 0;
+}
+@media (max-width: 1023px) { .atlas-page__aside { position: static; } }
+
 /* ---- KPI tile strip ---- */
 .atlas-page__tiles {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
-  padding: 18px 48px 6px;
 }
 .atlas-page__tiles--divisions {
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  padding-top: 4px;
-  padding-bottom: 6px;
 }
-@media (max-width: 1280px) {
-  .atlas-page__tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (min-width: 1440px) {
+  .atlas-page__tiles { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 }
-@media (max-width: 1023px) {
-  .atlas-page__tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 14px 24px 6px; gap: 10px; }
+@media (max-width: 720px) {
+  .atlas-page__tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .atlas-page__tiles--divisions { grid-template-columns: 1fr; }
 }
 
-/* ---- Rows: 50/50 medium cards, full-width brief, etc. ---- */
-.atlas-page__row {
-  padding: 10px 48px;
-}
+/* ---- Primary row: Talk + Today side-by-side ---- */
 .atlas-page__row--primary {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 18px;
+  gap: 16px;
 }
-.atlas-page__row--brief { padding-top: 4px; padding-bottom: 4px; }
 @media (max-width: 1023px) {
-  .atlas-page__row { padding: 8px 24px; }
   .atlas-page__row--primary { grid-template-columns: 1fr; gap: 12px; }
 }
-
-/* End padding so last row doesn't kiss the viewport edge. */
-.atlas-page__row:last-child { padding-bottom: 32px; }
 
 .atlas-page__error {
   position: fixed; bottom: 16px; left: 16px; z-index: 60;
