@@ -211,7 +211,8 @@ export function searchAudit(filter: AuditFilter): any[] {
 
 // ----- per-model spend (parse ~/.claude/projects/*/*.jsonl) ---------------
 
-// Anthropic pricing per 1M tokens (approximate, ~Q1 2026)
+// Anthropic pricing per 1M tokens (approximate, ~Q1 2026).
+// Cache_creation = 1.25× input. Cache_read = 0.10× input. Output unchanged.
 const PRICING: Record<string, { input: number; output: number }> = {
   'claude-opus-4-7':         { input: 15.0, output: 75.0 },
   'claude-opus-4-6':         { input: 15.0, output: 75.0 },
@@ -220,18 +221,23 @@ const PRICING: Record<string, { input: number; output: number }> = {
   'claude-sonnet-4-5':       { input: 3.0,  output: 15.0 },
   'claude-haiku-4-5':        { input: 1.0,  output: 5.0 },
   'gpt-5':                   { input: 1.25, output: 10.0 },
+  'gpt-5.5':                 { input: 1.25, output: 10.0 },
   'gpt-5-mini':              { input: 0.25, output: 2.0 },
-  'gemma':                   { input: 0,    output: 0 },   // local
+  'gemma':                   { input: 0,    output: 0 },
 };
 function normalizeModel(m: string): string {
   if (!m) return 'unknown';
-  // Strip date suffix like "-20251001"
   return m.replace(/-2\d{7}.*$/, '').replace(/^claude-/, 'claude-');
 }
-function estimatedCost(model: string, inputTok: number, outputTok: number): number {
+function estimatedCost(model: string, inTok: number, outTok: number, cacheCreate: number, cacheRead: number): number {
   const norm = normalizeModel(model);
   const p = PRICING[norm] || PRICING[norm.split('-').slice(0, 3).join('-')] || { input: 0, output: 0 };
-  return ((inputTok * p.input) + (outputTok * p.output)) / 1_000_000;
+  const cost =
+    (inTok * p.input) +
+    (cacheCreate * p.input * 1.25) +
+    (cacheRead * p.input * 0.02) +
+    (outTok * p.output);
+  return cost / 1_000_000;
 }
 
 export function spendByModel(days = 14) {
@@ -270,14 +276,18 @@ export function spendByModel(days = 14) {
         const model = (m?.model || entry?.model || '').toString();
         if (!model) continue;
         const usage = m?.usage || {};
-        const inTok = (usage.input_tokens || 0) + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0);
-        const outTok = usage.output_tokens || 0;
-        if (inTok === 0 && outTok === 0) continue;
-        if (!byModel[model]) byModel[model] = { calls: 0, input_tok: 0, output_tok: 0, est_cost: 0 };
+        const inTok        = usage.input_tokens || 0;
+        const cacheCreate  = usage.cache_creation_input_tokens || 0;
+        const cacheRead    = usage.cache_read_input_tokens || 0;
+        const outTok       = usage.output_tokens || 0;
+        if (inTok === 0 && cacheCreate === 0 && cacheRead === 0 && outTok === 0) continue;
+        if (!byModel[model]) byModel[model] = { calls: 0, input_tok: 0, cache_create_tok: 0, cache_read_tok: 0, output_tok: 0, est_cost: 0 };
         byModel[model].calls += 1;
-        byModel[model].input_tok += inTok;
-        byModel[model].output_tok += outTok;
-        byModel[model].est_cost += estimatedCost(model, inTok, outTok);
+        byModel[model].input_tok       += inTok;
+        byModel[model].cache_create_tok += cacheCreate;
+        byModel[model].cache_read_tok   += cacheRead;
+        byModel[model].output_tok      += outTok;
+        byModel[model].est_cost += estimatedCost(model, inTok, outTok, cacheCreate, cacheRead);
 
         const day = new Date(ts).toISOString().slice(0, 10);
         if (!dailyByModel[day]) dailyByModel[day] = {};

@@ -37,70 +37,86 @@ const trendLabel: any = {
 <style scoped>
 .tile {
   background: var(--atlas-card-bg);
-  border: 1px solid transparent;
-  border-radius: 14px;
-  padding: 16px 18px;
+  border: 0;
+  border-radius: 12px;
+  padding: 14px 16px 16px;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   text-align: left;
   min-width: 0;
   overflow: hidden;
-  transition: transform 120ms ease, border-color 120ms ease;
+  transition: background-color 120ms ease;
+  position: relative;
 }
 .tile--clickable { cursor: pointer; }
-.tile--clickable:hover { transform: translateY(-1px); border-color: var(--atlas-hairline); }
+.tile--clickable:hover { background: var(--atlas-card-bg-2, var(--atlas-card-bg)); }
 
-/* Subtle left rail for tone */
-.tile--good { box-shadow: inset 3px 0 0 var(--atlas-green); }
-.tile--warn { box-shadow: inset 3px 0 0 var(--atlas-yellow); }
-.tile--bad  { box-shadow: inset 3px 0 0 var(--atlas-red); }
-.tile--info { box-shadow: inset 3px 0 0 var(--atlas-blue); }
+/* Tone signal: thin top accent strip — only when condition fires.
+   Apple-minimal: tone is information, not decoration. */
+.tile--good::before,
+.tile--warn::before,
+.tile--bad::before,
+.tile--info::before {
+  content: '';
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  top: 0;
+  height: 2px;
+  border-radius: 0 0 2px 2px;
+}
+.tile--good::before { background: var(--atlas-green); }
+.tile--warn::before { background: var(--atlas-yellow); }
+.tile--bad::before  { background: var(--atlas-red); }
+.tile--info::before { background: var(--atlas-blue); opacity: 0.55; }
 
 .tile__head { display: flex; align-items: center; gap: 6px; min-height: 14px; }
 .tile__eyebrow {
   font-size: 10.5px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--atlas-text-secondary);
 }
 .tile__trend {
   margin-left: auto;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   color: var(--atlas-text-muted, var(--atlas-text-secondary));
 }
 .tile__trend--up   { color: var(--atlas-red); }
 .tile__trend--down { color: var(--atlas-green); }
-.tile__dot { margin-left: auto; width: 8px; height: 8px; border-radius: 50%; background: var(--atlas-text-muted); }
+.tile__dot { margin-left: auto; width: 6px; height: 6px; border-radius: 50%; background: var(--atlas-text-muted); }
 .tile__dot--green  { background: var(--atlas-green); }
 .tile__dot--yellow { background: var(--atlas-yellow); }
 .tile__dot--red    { background: var(--atlas-red); }
 
 .tile__value {
-  font-size: 28px;
+  font-size: 26px;
   font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--atlas-text-strong);
   font-variant-numeric: tabular-nums;
-  line-height: 1.05;
+  line-height: 1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  margin-top: 2px;
 }
 .tile__sub {
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--atlas-text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  letter-spacing: 0.005em;
 }
 
 @media (max-width: 1023px) {
-  .tile { padding: 14px 14px; border-radius: 12px; }
+  .tile { padding: 12px 14px 14px; border-radius: 10px; }
   .tile__value { font-size: 24px; }
 }
 @media (max-width: 480px) {

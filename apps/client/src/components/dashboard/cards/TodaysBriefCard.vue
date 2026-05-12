@@ -124,13 +124,13 @@ void emit;
   display: flex;
   flex-direction: column;
   background: var(--atlas-card-bg);
-  border-radius: 20px;
-  padding: 28px 32px;
+  border-radius: 12px;
+  padding: 24px 24px 22px;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  gap: 14px;
+  gap: 12px;
 }
-.card.is-compact { padding: 20px 22px; }
-@media (max-width: 1023px) { .card { padding: 20px 22px; } }
+.card.is-compact { padding: 20px 22px; border-radius: 10px; }
+@media (max-width: 1023px) { .card { padding: 20px 22px; border-radius: 10px; } }
 
 /* Tabs */
 .brief__tabs {

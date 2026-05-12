@@ -37,20 +37,20 @@ defineEmits<{ (e: 'open'): void }>();
 <style scoped>
 .div-tile {
   background: var(--atlas-card-bg);
-  border: 1px solid var(--atlas-hairline);
-  border-radius: 14px;
+  border: 0;
+  border-radius: 12px;
   padding: 14px 16px;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   text-align: left;
   cursor: pointer;
   min-width: 0;
   overflow: hidden;
-  transition: transform 120ms ease, border-color 120ms ease;
+  transition: background-color 120ms ease;
 }
-.div-tile:hover { transform: translateY(-1px); border-color: var(--atlas-text-secondary); }
+.div-tile:hover { background: var(--atlas-card-bg-2, var(--atlas-card-bg)); }
 
 .dt__head { display: flex; align-items: center; gap: 8px; }
 .dt__name { font-size: 14px; font-weight: 600; color: var(--atlas-text-strong); }
