@@ -567,7 +567,10 @@ export function createProject(name: string, path: string): { ok: boolean; projec
   if (!name?.trim()) return { ok: false, error: 'name required' };
   if (!path?.trim()) return { ok: false, error: 'path required' };
   const resolved = path.replace(/^~/, process.env.HOME || '');
-  if (!existsSync(resolved)) return { ok: false, error: `path does not exist: ${resolved}` };
+  if (!existsSync(resolved)) {
+    try { mkdirSync(resolved, { recursive: true }); }
+    catch (err: any) { return { ok: false, error: `mkdir failed: ${err.message}` }; }
+  }
   try { if (!statSync(resolved).isDirectory()) return { ok: false, error: 'path is not a directory' }; }
   catch { return { ok: false, error: 'path stat failed' }; }
 

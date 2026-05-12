@@ -25,12 +25,20 @@
       class="pane__chat"
       @keydown.enter.exact.prevent="onSubmit"
     >
+      <button
+        v-if="isPlan"
+        type="button"
+        class="pane__chat-approve"
+        @click="onApprovePlan"
+        :disabled="sending"
+        title="Resume session and execute the plan above"
+      >✓ Approve &amp; Execute</button>
       <textarea
         v-model="followUpText"
         :disabled="sending"
         class="pane__chat-input"
         rows="1"
-        :placeholder="sending ? 'Sending…' : 'Follow up — Enter to send, Shift+Enter for newline'"
+        :placeholder="sending ? 'Sending…' : (isPlan ? 'Or refine the plan…' : 'Follow up — Enter to send, Shift+Enter for newline')"
         @keydown.enter.shift.stop
       ></textarea>
       <button
@@ -86,6 +94,7 @@ const canFollowUp = computed(() =>
   !!props.task.session_id &&
   (props.task.status === 'review' || props.task.status === 'done' || props.task.status === 'failed')
 );
+const isPlan = computed(() => props.task.title.startsWith('[Plan]'));
 
 async function onSubmit() {
   const txt = followUpText.value.trim();
@@ -95,8 +104,16 @@ async function onSubmit() {
     emit('follow-up', props.task, txt);
     followUpText.value = '';
   } finally {
-    // Parent swaps the pinned task to the child; this pane unmounts.
-    // If for some reason the parent didn't swap, re-enable.
+    setTimeout(() => { sending.value = false; }, 1500);
+  }
+}
+
+async function onApprovePlan() {
+  if (sending.value) return;
+  sending.value = true;
+  try {
+    emit('follow-up', props.task, 'Approved. Execute the plan you just outlined. Apply all the edits described. Do not re-output the plan.');
+  } finally {
     setTimeout(() => { sending.value = false; }, 1500);
   }
 }
@@ -354,6 +371,20 @@ onBeforeUnmount(() => {
   border-radius: 5px;
   cursor: pointer;
 }
+.pane__chat-approve {
+  background: rgba(48,209,88,0.18);
+  color: #5ce665;
+  border: 1px solid rgba(48,209,88,0.40);
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pane__chat-approve:hover:not(:disabled) { background: rgba(48,209,88,0.28); }
+.pane__chat-approve:disabled { opacity: 0.4; cursor: not-allowed; }
 .pane__chat-send:disabled { opacity: 0.4; cursor: not-allowed; }
 .pane__chat-send:hover:not(:disabled) {
   background: rgba(94,158,255,0.3);
