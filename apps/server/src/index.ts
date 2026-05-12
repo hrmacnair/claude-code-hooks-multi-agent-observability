@@ -71,6 +71,7 @@ import {
   unpinTask as unpinWorkspaceTask,
   unpinAll as unpinAllWorkspace,
   TEMPLATES as WORKSPACE_TEMPLATES,
+  followUpTask as followUpWorkspaceTask,
 } from './atlas-workspace';
 
 // Initialize database
@@ -1632,6 +1633,17 @@ const server = Bun.serve({
     }
     if (url.pathname === '/api/atlas/workspace/templates' && req.method === 'GET') {
       return new Response(JSON.stringify({ templates: WORKSPACE_TEMPLATES }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // Phase 4: follow-up — creates child task with parent_task_id, resumes session on spawn
+    const wsFollowUp = url.pathname.match(/^\/api\/atlas\/workspace\/tasks\/([^\/]+)\/follow-up$/);
+    if (wsFollowUp && req.method === 'POST') {
+      let body: any = {}; try { body = await req.json(); } catch {}
+      const r = followUpWorkspaceTask(wsFollowUp[1], String(body.prompt || ''));
+      return new Response(JSON.stringify(r), {
+        status: r.ok ? 200 : 400,
         headers: { ...headers, 'Content-Type': 'application/json' }
       });
     }

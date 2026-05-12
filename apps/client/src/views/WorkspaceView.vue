@@ -58,6 +58,7 @@
         @expand="(t) => openTask = t"
         @unpin="onTogglePin"
         @unpin-all="unpinAllRemote()"
+        @follow-up="onFollowUp"
       />
 
       <BroadcastDock
@@ -133,6 +134,7 @@ const {
   createProject, createTask, taskAction,
   pinTaskRemote, unpinTaskRemote, unpinAllRemote,
   getProjectMemory, setProjectMemory,
+  followUpTask,
 } = useWorkspace();
 
 // ---- Pin state (server-persisted) ----
@@ -158,6 +160,18 @@ async function onTogglePin(t: WSTask) {
 // ---- Project memory editor ----
 const memoryFor = ref<WSProject | null>(null);
 function onEditMemory(p: WSProject) { memoryFor.value = p; }
+
+async function onFollowUp(parent: WSTask, prompt: string) {
+  try {
+    const child = await followUpTask(parent.id, prompt);
+    await taskAction(child.id, 'spawn');
+    // Swap pin: parent's slot now shows the child
+    await pinTaskRemote(child.id);
+    await unpinTaskRemote(parent.id);
+  } catch (e: any) {
+    alert('Follow-up failed: ' + e.message);
+  }
+}
 
 async function onRerun(t: WSTask) {
   // Create new task with same prompt + spawn

@@ -141,6 +141,16 @@ export function useWorkspace() {
     return r.log || '';
   }
 
+  async function followUpTask(parentId: string, prompt: string): Promise<WSTask> {
+    const r = await fetch(`${API_BASE_URL}/api/atlas/workspace/tasks/${parentId}/follow-up`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+    }).then(r => r.json());
+    if (!r.ok) throw new Error(r.error || 'follow-up failed');
+    tasks.value = [r.task, ...tasks.value];
+    return r.task as WSTask;
+  }
+
   // Subscribe to workspace WebSocket events. Reuse the same /stream socket
   // the dashboard already opens — but we want our own subscription so we
   // get every event independent of useWebSocket's filter.
@@ -197,5 +207,6 @@ export function useWorkspace() {
     refresh, createProject, deleteProject, createTask, taskAction, fetchTaskLog,
     pinTaskRemote, unpinTaskRemote, unpinAllRemote,
     getProjectMemory, setProjectMemory,
+    followUpTask,
   };
 }

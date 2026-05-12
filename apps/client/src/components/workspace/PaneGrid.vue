@@ -14,6 +14,7 @@
         @rerun="(t) => $emit('rerun', t)"
         @expand="(t) => $emit('expand', t)"
         @unpin="(t) => $emit('unpin', t)"
+        @follow-up="(t, p) => $emit('follow-up', t, p)"
       />
     </div>
   </section>
@@ -32,6 +33,7 @@ const props = defineProps<{
 }>();
 defineEmits<{
   (e: 'kill' | 'rerun' | 'expand' | 'unpin', t: WSTask): void;
+  (e: 'follow-up', t: WSTask, prompt: string): void;
   (e: 'unpin-all'): void;
 }>();
 

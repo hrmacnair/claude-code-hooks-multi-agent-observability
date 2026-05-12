@@ -70,19 +70,24 @@ export function initWorkspaceTables(): void {
       input_tokens INTEGER,
       output_tokens INTEGER,
       cache_read_tokens INTEGER,
-      cache_create_tokens INTEGER
+      cache_create_tokens INTEGER,
+      session_id TEXT,
+      parent_task_id TEXT
     )
   `);
-  d.exec('CREATE INDEX IF NOT EXISTS idx_ws_tasks_project ON workspace_tasks(project_id)');
-  d.exec('CREATE INDEX IF NOT EXISTS idx_ws_tasks_status ON workspace_tasks(status)');
-
-  // Migration: add cost columns if missing
+  // Migration: add cost + session columns if missing (must run before indexes
+  // that reference the new columns, since CREATE TABLE IF NOT EXISTS is a no-op
+  // when the table already exists from an older schema).
   const cols = d.prepare(`PRAGMA table_info(workspace_tasks)`).all() as any[];
   const have = new Set(cols.map(c => c.name));
-  for (const col of ['cost_usd REAL', 'input_tokens INTEGER', 'output_tokens INTEGER', 'cache_read_tokens INTEGER', 'cache_create_tokens INTEGER']) {
+  for (const col of ['cost_usd REAL', 'input_tokens INTEGER', 'output_tokens INTEGER', 'cache_read_tokens INTEGER', 'cache_create_tokens INTEGER', 'session_id TEXT', 'parent_task_id TEXT']) {
     const name = col.split(' ')[0];
     if (!have.has(name)) d.exec(`ALTER TABLE workspace_tasks ADD COLUMN ${col}`);
   }
+
+  d.exec('CREATE INDEX IF NOT EXISTS idx_ws_tasks_project ON workspace_tasks(project_id)');
+  d.exec('CREATE INDEX IF NOT EXISTS idx_ws_tasks_status ON workspace_tasks(status)');
+  d.exec('CREATE INDEX IF NOT EXISTS idx_ws_tasks_parent ON workspace_tasks(parent_task_id)');
 
   d.exec(`
     CREATE TABLE IF NOT EXISTS workspace_pins (
@@ -207,6 +212,19 @@ interface CostUsage {
   output_tokens: number;
   cache_read_tokens: number;
   cache_create_tokens: number;
+}
+
+function parseStreamJsonSession(jsonlText: string): string | null {
+  // First system:init message carries session_id
+  const lines = jsonlText.split('\n').filter(l => l.trim().startsWith('{'));
+  for (const line of lines) {
+    try {
+      const m = JSON.parse(line);
+      if (m?.type === 'system' && m.session_id) return m.session_id;
+      if (m?.session_id) return m.session_id;
+    } catch {}
+  }
+  return null;
 }
 
 function parseStreamJsonCost(logText: string): CostUsage | null {
@@ -359,6 +377,8 @@ export interface WorkspaceTask {
   output_tokens: number | null;
   cache_read_tokens: number | null;
   cache_create_tokens: number | null;
+  session_id: string | null;
+  parent_task_id: string | null;
   project_name?: string;
   project_path?: string;
 }
@@ -392,6 +412,7 @@ export function createTask(input: {
   prompt: string;
   model?: string;
   mode?: 'safe' | 'auto';
+  parent_task_id?: string | null;
 }): { ok: boolean; task?: WorkspaceTask; error?: string } {
   if (!input.project_id) return { ok: false, error: 'project_id required' };
   if (!input.title?.trim()) return { ok: false, error: 'title required' };
@@ -406,14 +427,33 @@ export function createTask(input: {
   const model = input.model || 'sonnet';
   const mode = input.mode === 'auto' ? 'auto' : 'safe';
   const logPath = `${RUNS_DIR}/${id}.log`;
+  const parentId = input.parent_task_id || null;
 
   d.prepare(`
     INSERT INTO workspace_tasks
-      (id, project_id, title, prompt, model, mode, status, created_at, log_path)
-    VALUES (?, ?, ?, ?, ?, ?, 'backlog', ?, ?)
-  `).run(id, input.project_id, input.title.trim(), input.prompt.trim(), model, mode, now, logPath);
+      (id, project_id, title, prompt, model, mode, status, created_at, log_path, parent_task_id)
+    VALUES (?, ?, ?, ?, ?, ?, 'backlog', ?, ?, ?)
+  `).run(id, input.project_id, input.title.trim(), input.prompt.trim(), model, mode, now, logPath, parentId);
 
   return { ok: true, task: getTask(id)! };
+}
+
+export function followUpTask(parentId: string, prompt: string): { ok: boolean; task?: WorkspaceTask; error?: string } {
+  if (!prompt?.trim()) return { ok: false, error: 'prompt required' };
+  const parent = getTask(parentId);
+  if (!parent) return { ok: false, error: 'parent task not found' };
+  if (parent.status === 'running') return { ok: false, error: 'parent still running — wait for it to finish' };
+  if (!parent.session_id) return { ok: false, error: 'parent has no session_id (only Claude tasks can be resumed)' };
+
+  const title = `↳ ${prompt.slice(0, 60).trim()}${prompt.length > 60 ? '…' : ''}`;
+  return createTask({
+    project_id: parent.project_id,
+    title,
+    prompt,
+    model: parent.model,
+    mode: parent.mode,
+    parent_task_id: parentId,
+  });
 }
 
 export function moveTask(id: string, status: WorkspaceTask['status']): { ok: boolean; error?: string } {
@@ -495,6 +535,11 @@ export function spawnTask(id: string): { ok: boolean; pid?: number; error?: stri
       '--output-format', 'stream-json',
       '--verbose',
     ];
+    // Follow-up: resume the parent's session so context carries over
+    if (task.parent_task_id) {
+      const parent = getTask(task.parent_task_id);
+      if (parent?.session_id) args.push('--resume', parent.session_id);
+    }
     if (memory) args.push('--append-system-prompt', memory);
     args.push(task.prompt);
   } else if (cfg.backend === 'openai' || cfg.backend === 'ollama') {
@@ -644,26 +689,37 @@ export function spawnTask(id: string): { ok: boolean; pid?: number; error?: stri
       } catch { /* non-fatal */ }
     }
 
+    // Parse session_id from sidecar too (only meaningful for Claude)
+    let sessionId: string | null = null;
+    if (cfg.backend === 'anthropic') {
+      try {
+        const jsonlText = await Bun.file(jsonlPath).text();
+        sessionId = parseStreamJsonSession(jsonlText);
+      } catch {}
+    }
+
     if (cost) {
       d.prepare(`
         UPDATE workspace_tasks
         SET status = ?, exit_code = ?, finished_at = ?,
             cost_usd = ?, input_tokens = ?, output_tokens = ?,
-            cache_read_tokens = ?, cache_create_tokens = ?
+            cache_read_tokens = ?, cache_create_tokens = ?,
+            session_id = COALESCE(?, session_id)
         WHERE id = ?
       `).run(nextStatus, exitCode, Date.now(),
              cost.cost_usd, cost.input_tokens, cost.output_tokens,
-             cost.cache_read_tokens, cost.cache_create_tokens, id);
+             cost.cache_read_tokens, cost.cache_create_tokens, sessionId, id);
     } else {
       d.prepare(`
         UPDATE workspace_tasks
-        SET status = ?, exit_code = ?, finished_at = ?
+        SET status = ?, exit_code = ?, finished_at = ?,
+            session_id = COALESCE(?, session_id)
         WHERE id = ?
-      `).run(nextStatus, exitCode, Date.now(), id);
+      `).run(nextStatus, exitCode, Date.now(), sessionId, id);
     }
     broadcast({
       type: 'workspace.task',
-      data: { taskId: id, status: nextStatus, exit_code: exitCode, cost_usd: cost?.cost_usd },
+      data: { taskId: id, status: nextStatus, exit_code: exitCode, cost_usd: cost?.cost_usd, session_id: sessionId },
     });
   });
 
