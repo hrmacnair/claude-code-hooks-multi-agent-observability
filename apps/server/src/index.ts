@@ -17,6 +17,7 @@ import {
   rejectProposal,
   deferProposal,
   rollbackProposal,
+  editProposal,
 } from './atlas-proposals';
 import {
   getToday,
@@ -886,6 +887,8 @@ const server = Bun.serve({
     }
 
     // GET /api/atlas/proposals/:id — single proposal (partial-prefix ID match)
+    // Optional ?format=yaml returns the raw YAML file body inside { yaml }
+    // so the edit two-step flow can show the operator exactly what's on disk.
     const propGet = url.pathname.match(/^\/api\/atlas\/proposals\/([^\/]+)$/);
     if (propGet && req.method === 'GET') {
       const found = loadProposal(propGet[1]);
@@ -893,6 +896,14 @@ const server = Bun.serve({
         return new Response(JSON.stringify({ error: 'not found' }), {
           status: 404, headers: { ...headers, 'Content-Type': 'application/json' }
         });
+      }
+      const fmt = url.searchParams.get('format');
+      if (fmt === 'yaml') {
+        let yamlText = '';
+        try { yamlText = require('fs').readFileSync(found.path, 'utf8'); } catch {}
+        return new Response(JSON.stringify({
+          id: propGet[1], status: found.status, path: found.path, yaml: yamlText,
+        }), { headers: { ...headers, 'Content-Type': 'application/json' } });
       }
       return new Response(JSON.stringify({ id: propGet[1], status: found.status, data: found.data }), {
         headers: { ...headers, 'Content-Type': 'application/json' }
@@ -1191,6 +1202,26 @@ const server = Bun.serve({
       return new Response(JSON.stringify(result), {
         status: result.ok ? 200 : 400,
         headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // POST /api/atlas/proposals/:id/edit — operator submits new YAML body
+    const propEditAction = url.pathname.match(/^\/api\/atlas\/proposals\/([^\/]+)\/edit$/);
+    if (propEditAction && req.method === 'POST') {
+      const id = propEditAction[1];
+      let body: any = {};
+      try { body = await req.json(); } catch {}
+      const yamlText = (body.yaml || body.body || '').toString();
+      if (!yamlText.trim()) {
+        return new Response(JSON.stringify({ ok: false, message: 'missing yaml field in body' }), {
+          status: 400,
+          headers: { ...headers, 'Content-Type': 'application/json' },
+        });
+      }
+      const result = editProposal(id, yamlText, body.approver || 'operator', body.surface || 'dashboard');
+      return new Response(JSON.stringify(result), {
+        status: result.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' },
       });
     }
 

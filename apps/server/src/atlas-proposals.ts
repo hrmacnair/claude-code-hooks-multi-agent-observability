@@ -671,3 +671,88 @@ export function rollbackProposal(id: string, approver: string, surface: string):
     return { ok: false, message: `rollback failed: ${err.message}` };
   }
 }
+
+// ----- edit (Layer 5b verb) -----------------------------------------------
+//
+// Operator edits a queued/pending/deferred proposal before approving. Two-step
+// flow from Telegram: `edit prop_xxx` → bot replies with current YAML →
+// operator's next message is treated as the new YAML body → POSTed here.
+// Self-elevation re-check runs on the edited content: Atlas's proposal
+// pipeline never applies elevation types, even when operator-edited.
+//
+// Id is preserved (operator can't rename the proposal via edit). Original
+// file is backed up to ~/atlas/proposals/edits/<id>-<ts>.yaml.bak before
+// overwrite. edit_history is appended.
+
+export function editProposal(
+  id: string,
+  newYamlText: string,
+  approver: string,
+  surface: string,
+): { ok: boolean; message: string; edited_path?: string } {
+  const found = loadProposal(id);
+  if (!found) return { ok: false, message: `proposal ${id} not found` };
+  if (found.status === 'applied' || found.status === 'rejected') {
+    return { ok: false, message: `cannot edit a proposal in state '${found.status}'` };
+  }
+
+  // Parse the edited YAML via uv+pyyaml shell-out (same path as readYaml).
+  let parsed: ProposalYaml;
+  try {
+    const result = spawnSync(
+      UV_BIN,
+      ['run', '--quiet', '--with', 'pyyaml', 'python3', '-c',
+       'import sys, json, yaml; print(json.dumps(yaml.safe_load(sys.stdin) or {}))'],
+      { input: newYamlText, encoding: 'utf8' },
+    );
+    if (result.status !== 0) {
+      return { ok: false, message: `invalid YAML: ${(result.stderr || '').trim().slice(0, 200)}` };
+    }
+    parsed = JSON.parse(result.stdout);
+  } catch (err: any) {
+    return { ok: false, message: `YAML parse failed: ${err.message}` };
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    return { ok: false, message: 'YAML did not parse to an object' };
+  }
+
+  const propId = found.data.id || basename(found.path).replace(/\.yaml$/, '');
+  parsed.id = propId;                    // preserve identity
+
+  // Re-run self-elevation guard on the edited content.
+  const elev = isSelfElevation(parsed);
+  if (elev.blocked) {
+    return { ok: false, message: `edit rejected: ${elev.reason}` };
+  }
+
+  // Backup original.
+  const editsDir = join(PROPOSALS_DIR, 'edits');
+  mkdirSync(editsDir, { recursive: true });
+  const stamp = nowIso().replace(/:/g, '-');
+  const backup = join(editsDir, `${propId}-${stamp}.yaml.bak`);
+  try { copyFileSync(found.path, backup); } catch {}
+
+  // Stamp edit metadata, preserve history.
+  parsed.edited_by = approver;
+  parsed.edited_via = surface;
+  parsed.edited_at = nowIso();
+  const prior = Array.isArray(parsed.edit_history) ? parsed.edit_history : [];
+  parsed.edit_history = [...prior, { at: nowIso(), by: approver, via: surface, backup }];
+
+  writeYaml(found.path, parsed);
+
+  appendAudit({
+    ts: nowIso(), id: actId(),
+    division: parsed.proposer_division || 'atlas-meta',
+    agent: parsed.proposer_agent || 'producer',
+    action: 'proposal_edited',
+    target: propId,
+    summary: `Edited via ${surface}; backup: ${backup}`,
+    autonomy: 'bold',
+    outcome: 'executed',
+    approver,
+    correlation_id: propId,
+  });
+
+  return { ok: true, message: `edited ${propId}`, edited_path: found.path };
+}
