@@ -165,7 +165,12 @@ onUnmounted(() => window.removeEventListener('resize', recomputeCompact));
 
 const readingBrief = ref<any>(null);
 const talkFullscreen = ref(false);
-const workspaceOpen = ref(false);
+// `?workspace=1` URL param auto-opens the Workspace overlay — useful for
+// headless screenshots and direct deep-links from external dashboards.
+const workspaceOpen = ref(
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).get('workspace') === '1'
+);
 const liveAllOpen = ref(false);
 const spendOpen = ref(false);
 const auditOpen = ref(false);

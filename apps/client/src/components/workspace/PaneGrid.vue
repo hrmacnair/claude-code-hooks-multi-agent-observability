@@ -54,6 +54,18 @@ const cols = computed(() => {
   flex-direction: column;
   gap: 10px;
   margin-top: 8px;
+  /* Stick to the bottom of the workspace main so terminals stay visible
+     even when the Kanban backlog gets long. Kanban scrolls behind. */
+  position: sticky;
+  bottom: 0;
+  background: var(--atlas-bg-page);
+  z-index: 5;
+  /* Hairline separator from the scrolling kanban above. */
+  border-top: 1px solid var(--atlas-border-subtle);
+  padding-top: 10px;
+  /* Cap total pane area at ~40% of viewport so kanban stays usable. */
+  max-height: 40vh;
+  overflow-y: auto;
 }
 .pane-grid__head {
   display: flex;
