@@ -189,6 +189,23 @@ export function useWorkspace() {
     if (t) { t.worktree_path = null; t.branch = null; tasks.value = [...tasks.value]; }
   }
 
+  async function mergeAndPushTask(id: string): Promise<{ pushed_branch?: string }> {
+    const r = await fetch(`${API_BASE_URL}/api/atlas/workspace/tasks/${id}/merge-push`, { method: 'POST' }).then(r => r.json());
+    if (!r.ok) throw new Error(r.error || 'merge+push failed');
+    await refresh();
+    return { pushed_branch: r.pushed_branch };
+  }
+  async function openPRForTask(id: string): Promise<{ pr_url?: string }> {
+    const r = await fetch(`${API_BASE_URL}/api/atlas/workspace/tasks/${id}/pr`, { method: 'POST' }).then(r => r.json());
+    if (!r.ok) throw new Error(r.error || 'PR failed');
+    return { pr_url: r.pr_url };
+  }
+  async function getProjectInfo(projectId: string): Promise<any> {
+    const r = await fetch(`${API_BASE_URL}/api/atlas/workspace/projects/${projectId}/info`).then(r => r.json());
+    if (!r.ok) throw new Error(r.error || 'info failed');
+    return r;
+  }
+
   async function archiveTask(id: string): Promise<void> {
     await fetch(`${API_BASE_URL}/api/atlas/workspace/tasks/${id}/archive`, { method: 'POST' });
     tasks.value = tasks.value.filter(t => t.id !== id);
@@ -273,5 +290,6 @@ export function useWorkspace() {
     createTemplate, updateTemplate, deleteTemplate,
     archiveTask, archiveDone,
     fetchTaskDiff, mergeTask, discardTaskWorktree,
+    mergeAndPushTask, openPRForTask, getProjectInfo,
   };
 }

@@ -104,7 +104,10 @@
       :task="diffFor"
       :fetch-diff="fetchTaskDiff"
       :merge="mergeTask"
+      :merge-push="mergeAndPushTask"
+      :open-pr="openPRForTask"
       :discard="discardTaskWorktree"
+      :project-info="getProjectInfo"
       @close="diffFor = null"
       @merged="(t) => { diffFor = null; }"
       @discarded="(t) => { diffFor = null; }"
@@ -165,6 +168,7 @@ const {
   createTemplate, updateTemplate, deleteTemplate,
   archiveDone,
   fetchTaskDiff, mergeTask, discardTaskWorktree,
+  mergeAndPushTask, openPRForTask, getProjectInfo,
 } = useWorkspace();
 
 const templatesOpen = ref(false);

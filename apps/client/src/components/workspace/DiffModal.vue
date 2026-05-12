@@ -3,12 +3,15 @@
     <div class="diff">
       <header class="diff__head">
         <div>
-          <span class="diff__eyebrow">{{ task.project_name }} · {{ task.branch || '(no branch)' }}</span>
+          <span class="diff__eyebrow">{{ task.project_name }} · {{ task.branch || '(no branch)' }}<span v-if="info?.currentBranch"> → {{ info.currentBranch }}</span><span v-if="info?.remote?.isGitHub"> · {{ info.remote.owner }}/{{ info.remote.repo }}</span></span>
           <h3 class="diff__title">{{ task.title }}</h3>
+          <p v-if="prUrl" class="diff__prurl">PR: <a :href="prUrl" target="_blank">{{ prUrl }}</a></p>
         </div>
         <div class="diff__actions">
           <button class="diff__btn diff__btn--danger" @click="onDiscard" :disabled="busy" title="Drop the branch + worktree">🗑 Discard</button>
-          <button class="diff__btn diff__btn--primary" @click="onMerge" :disabled="busy || !hasDiff" title="Fast-forward merge into the project's current branch">↪ Merge</button>
+          <button class="diff__btn" @click="onMerge" :disabled="busy || !hasDiff" title="Fast-forward merge into the project's current branch (local only)">↪ Merge</button>
+          <button class="diff__btn diff__btn--primary" @click="onMergePush" :disabled="busy || !hasDiff" title="FF merge + git push origin">↪ Merge + Push</button>
+          <button v-if="info?.remote?.isGitHub" class="diff__btn diff__btn--primary" @click="onOpenPR" :disabled="busy || !hasDiff" title="Push branch + gh pr create">⏶ Open PR</button>
           <button class="diff__x" @click="$emit('close')">✕</button>
         </div>
       </header>
@@ -26,22 +29,31 @@ const props = defineProps<{
   task: WSTask;
   fetchDiff: (id: string) => Promise<{ ok: boolean; diff: string; error?: string }>;
   merge: (id: string) => Promise<void>;
+  mergePush: (id: string) => Promise<{ pushed_branch?: string }>;
+  openPr: (id: string) => Promise<{ pr_url?: string }>;
   discard: (id: string) => Promise<void>;
+  projectInfo: (id: string) => Promise<any>;
 }>();
 const emit = defineEmits<{ (e: 'close'): void; (e: 'merged' | 'discarded', t: WSTask): void }>();
 
 const diff = ref('');
 const error = ref<string | null>(null);
 const busy = ref(false);
+const info = ref<any>(null);
+const prUrl = ref<string | null>(null);
 
 const hasDiff = computed(() => diff.value.trim().length > 0);
 
 onMounted(async () => {
   busy.value = true;
   try {
-    const r = await props.fetchDiff(props.task.id);
-    if (r.ok) diff.value = r.diff;
-    else error.value = r.error || 'diff failed';
+    const [d, i] = await Promise.all([
+      props.fetchDiff(props.task.id),
+      props.projectInfo(props.task.project_id).catch(() => null),
+    ]);
+    if (d.ok) diff.value = d.diff;
+    else error.value = d.error || 'diff failed';
+    info.value = i;
   } catch (e: any) { error.value = e.message; }
   finally { busy.value = false; }
 });
@@ -70,6 +82,32 @@ async function onMerge() {
     await props.merge(props.task.id);
     emit('merged', props.task);
     emit('close');
+  } catch (e: any) { error.value = e.message; }
+  finally { busy.value = false; }
+}
+
+async function onMergePush() {
+  const target = info.value?.currentBranch || 'the current branch';
+  if (!confirm(`FF merge ${props.task.branch} into ${target} and push to origin? This affects the remote.`)) return;
+  busy.value = true;
+  error.value = null;
+  try {
+    const r = await props.mergePush(props.task.id);
+    emit('merged', props.task);
+    alert(`Merged + pushed to origin/${r.pushed_branch}`);
+    emit('close');
+  } catch (e: any) { error.value = e.message; }
+  finally { busy.value = false; }
+}
+
+async function onOpenPR() {
+  if (!confirm(`Push ${props.task.branch} to origin and open a GitHub PR?`)) return;
+  busy.value = true;
+  error.value = null;
+  try {
+    const r = await props.openPr(props.task.id);
+    prUrl.value = r.pr_url || null;
+    if (r.pr_url) window.open(r.pr_url, '_blank');
   } catch (e: any) { error.value = e.message; }
   finally { busy.value = false; }
 }
@@ -114,6 +152,8 @@ async function onDiscard() {
   font-family: ui-monospace, Menlo, monospace;
 }
 .diff__title { margin: 4px 0 0; font-size: 18px; font-weight: 600; color: var(--atlas-text-strong); }
+.diff__prurl { margin: 6px 0 0; font-size: 12px; color: var(--atlas-blue); font-family: ui-monospace, Menlo, monospace; }
+.diff__prurl a { color: var(--atlas-blue); text-decoration: underline; }
 
 .diff__actions { display: flex; gap: 6px; align-items: center; }
 .diff__btn {

@@ -81,6 +81,9 @@ import {
   getTaskDiff as getWorkspaceTaskDiff,
   mergeTask as mergeWorkspaceTask,
   discardTaskWorktree as discardWorkspaceTaskWorktree,
+  getProjectInfo as getWorkspaceProjectInfo,
+  mergeAndPushTask as mergeAndPushWorkspaceTask,
+  openPRForTask as openPRForWorkspaceTask,
 } from './atlas-workspace';
 
 // Initialize database
@@ -1702,6 +1705,30 @@ const server = Bun.serve({
     const wsTaskDiscard = url.pathname.match(/^\/api\/atlas\/workspace\/tasks\/([^\/]+)\/discard$/);
     if (wsTaskDiscard && req.method === 'POST') {
       const r = discardWorkspaceTaskWorktree(wsTaskDiscard[1]);
+      return new Response(JSON.stringify(r), {
+        status: r.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    const wsTaskMergePush = url.pathname.match(/^\/api\/atlas\/workspace\/tasks\/([^\/]+)\/merge-push$/);
+    if (wsTaskMergePush && req.method === 'POST') {
+      const r = mergeAndPushWorkspaceTask(wsTaskMergePush[1]);
+      return new Response(JSON.stringify(r), {
+        status: r.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    const wsTaskPR = url.pathname.match(/^\/api\/atlas\/workspace\/tasks\/([^\/]+)\/pr$/);
+    if (wsTaskPR && req.method === 'POST') {
+      const r = openPRForWorkspaceTask(wsTaskPR[1]);
+      return new Response(JSON.stringify(r), {
+        status: r.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    const wsProjInfo = url.pathname.match(/^\/api\/atlas\/workspace\/projects\/([^\/]+)\/info$/);
+    if (wsProjInfo && req.method === 'GET') {
+      const r = getWorkspaceProjectInfo(wsProjInfo[1]);
       return new Response(JSON.stringify(r), {
         status: r.ok ? 200 : 400,
         headers: { ...headers, 'Content-Type': 'application/json' }
