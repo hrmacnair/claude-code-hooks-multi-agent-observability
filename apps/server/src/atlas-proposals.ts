@@ -140,6 +140,8 @@ function actId(): string {
   return `act_${Math.floor(Date.now() / 1000)}_${crypto.randomBytes(3).toString('hex')}`;
 }
 
+import { bumpDivisionState } from './atlas-division-state';
+
 function appendAudit(entry: any): void {
   try {
     mkdirSync(AUDIT_DIR, { recursive: true });
@@ -148,6 +150,11 @@ function appendAudit(entry: any): void {
   } catch {
     // swallow — never break approval flow on audit write failure
   }
+  try {
+    if (entry && entry.division) {
+      bumpDivisionState(entry.division, entry.id || null, entry.ts || '');
+    }
+  } catch {}
 }
 
 // ----- velocity cap --------------------------------------------------------

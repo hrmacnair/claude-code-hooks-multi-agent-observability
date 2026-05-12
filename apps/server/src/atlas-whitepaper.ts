@@ -37,11 +37,18 @@ const AUDIT_DIR = join(ATLAS_HOME, 'audit');
 
 function nowIso(): string { return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'); }
 function actId(): string { return `act_${Math.floor(Date.now() / 1000)}_${crypto.randomBytes(3).toString('hex')}`; }
+import { bumpDivisionState } from './atlas-division-state';
+
 function appendAudit(entry: any): void {
   try {
     mkdirSync(AUDIT_DIR, { recursive: true });
     const month = new Date().toISOString().slice(0, 7);
     appendFileSync(join(AUDIT_DIR, `${month}.log`), JSON.stringify(entry) + '\n');
+  } catch {}
+  try {
+    if (entry && entry.division) {
+      bumpDivisionState(entry.division, entry.id || null, entry.ts || '');
+    }
   } catch {}
 }
 

@@ -118,6 +118,8 @@ function actId(): string {
   return `act_${Math.floor(Date.now() / 1000)}_${crypto.randomBytes(3).toString('hex')}`;
 }
 
+import { bumpDivisionState } from './atlas-division-state';
+
 function appendAudit(entry: any): void {
   try {
     mkdirSync(AUDIT_DIR, { recursive: true });
@@ -125,6 +127,11 @@ function appendAudit(entry: any): void {
     const path = join(AUDIT_DIR, `${month}.log`);
     const { appendFileSync } = require('fs');
     appendFileSync(path, JSON.stringify(entry) + '\n');
+  } catch {}
+  try {
+    if (entry && entry.division) {
+      bumpDivisionState(entry.division, entry.id || null, entry.ts || '');
+    }
   } catch {}
 }
 
