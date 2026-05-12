@@ -22,11 +22,20 @@
 
     <!-- Full thread -->
     <div v-else ref="threadEl" class="talk__thread">
-      <div v-if="!messages.length" class="talk__empty">
+      <div v-if="!messages.length && pinnedActions.length === 0" class="talk__empty">
         <p class="talk__empty-lead">What can Atlas help with?</p>
         <div class="talk__empty-suggestions">
           <button v-for="s in suggestions" :key="s" class="talk__chip" @click="send(s)" :disabled="sending">{{ s }}</button>
         </div>
+      </div>
+
+      <!-- Pinned actions -->
+      <div v-if="!compact && pinnedActions.length" class="talk__pinned">
+        <button v-for="p in pinnedActions" :key="p" class="talk__chip talk__chip--pinned" :disabled="sending" @click="send(p)" :title="p">
+          <span class="talk__chip-pin">📌</span>
+          <span class="talk__chip-text">{{ p.length > 36 ? p.slice(0, 35) + '…' : p }}</span>
+          <span class="talk__chip-x" @click.stop="unpin(p)" title="Unpin">×</span>
+        </button>
       </div>
 
       <div v-for="(msg, i) in messages" :key="i" class="talk__msg" :class="`is-${msg.role}`">
@@ -39,10 +48,23 @@
           </div>
           <div v-if="msg.text">{{ msg.text }}</div>
         </div>
-        <div v-if="msg.role === 'atlas' && msg.decision" class="talk__meta">
-          @{{ msg.decision.agent }} · {{ msg.decision.project }} · {{ msg.decision.model }}
+        <div class="talk__msg-tools">
+          <div v-if="msg.role === 'atlas' && msg.decision" class="talk__meta">
+            @{{ msg.decision.agent }} · {{ msg.decision.project }} · {{ msg.decision.model }}
+          </div>
+          <div v-else-if="msg.role === 'error'" class="talk__meta is-error">{{ msg.detail || 'error' }}</div>
+          <button v-if="msg.role === 'user'" class="talk__pin-btn" :title="isPinned(msg.text) ? 'Pinned' : 'Pin as quick action'" @click="togglePin(msg.text)">
+            <span v-if="isPinned(msg.text)">📌</span><span v-else>+pin</span>
+          </button>
+          <button v-if="msg.role === 'atlas' && voiceSupported" class="talk__speak-btn" :title="speakingId === i ? 'Stop' : 'Speak'" @click="toggleSpeak(i, msg.text)">
+            {{ speakingId === i ? '◼' : '🔊' }}
+          </button>
         </div>
-        <div v-else-if="msg.role === 'error'" class="talk__meta is-error">{{ msg.detail || 'error' }}</div>
+      </div>
+
+      <!-- Quick-reply suggestions after Atlas's last reply -->
+      <div v-if="quickReplies.length && messages[messages.length - 1]?.role === 'atlas'" class="talk__quick">
+        <button v-for="q in quickReplies" :key="q" class="talk__chip talk__chip--quick" @click="send(q)" :disabled="sending">{{ q }}</button>
       </div>
 
       <div v-if="sending" class="talk__msg is-atlas">
@@ -87,12 +109,45 @@
         @keydown="onKey"
         :disabled="sending"
       />
+      <button
+        v-if="speechSupported"
+        type="button"
+        class="talk__mic"
+        :class="{ 'is-on': listening }"
+        @click="onMic"
+        :disabled="sending"
+        :aria-label="listening ? 'Stop dictation' : 'Dictate'"
+        :title="listening ? 'Stop dictation' : 'Dictate'"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 1.5a3 3 0 0 0-3 3v6a3 3 0 1 0 6 0v-6a3 3 0 0 0-3-3z"/>
+          <path d="M5 10v1a7 7 0 0 0 14 0v-1"/>
+          <path d="M12 18.5V22"/>
+        </svg>
+      </button>
       <button type="submit" class="talk__send" :disabled="!canSend || sending" aria-label="Send">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M12 19V5M5 12l7-7 7 7"/>
         </svg>
       </button>
     </form>
+
+    <!-- Visual model picker — chip row below composer. -->
+    <div v-if="!compact" class="talk__models" role="radiogroup" aria-label="Force model">
+      <button
+        v-for="m in MODELS"
+        :key="m.id"
+        type="button"
+        class="talk__chip-model"
+        :class="{ 'is-active': forceModel === m.id }"
+        :title="`${m.label} · ${m.detail}`"
+        :aria-pressed="forceModel === m.id"
+        @click="forceModel = m.id"
+      >
+        <ModelLogo :family="m.family" :size="20" />
+        <span class="talk__chip-label">{{ m.label }}</span>
+      </button>
+    </div>
 
     <!-- Error toast -->
     <div v-if="errorToast" class="talk__toast">{{ errorToast }}</div>
@@ -103,8 +158,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { API_BASE_URL } from '../../../config';
+import { useSpeechToText } from '../../../composables/useSpeechToText';
+import { fetchSuggestions } from '../../../composables/useAtlasViews';
+import ModelLogo from '../ModelLogo.vue';
 
 interface Msg {
   role: 'user' | 'atlas' | 'error';
@@ -138,6 +196,82 @@ const pending = ref<Pending[]>([]);
 const dragover = ref(false);
 const errorToast = ref('');
 let errorTimer: any = null;
+
+// Force-model picker (persisted across reloads). Empty string = auto/router.
+const MODEL_KEY = 'atlas.talkForceModel';
+const forceModel = ref<string>(localStorage.getItem(MODEL_KEY) || '');
+watch(forceModel, (v) => { try { localStorage.setItem(MODEL_KEY, v); } catch {} });
+const MODELS = [
+  { id: '',          label: 'Auto',  glyph: '⚡', family: 'auto',      detail: 'Router decides per message' },
+  { id: 'opus',      label: 'Opus',  glyph: 'A', family: 'anthropic', detail: 'Anthropic · top reasoning' },
+  { id: 'sonnet',    label: 'Sonnet',glyph: 'A', family: 'anthropic', detail: 'Anthropic · default coder' },
+  { id: 'haiku',     label: 'Haiku', glyph: 'A', family: 'anthropic', detail: 'Anthropic · fast + cheap' },
+  { id: 'gpt5',      label: 'GPT-5', glyph: 'G', family: 'openai',    detail: 'OpenAI · second opinion' },
+  { id: 'gpt5-mini', label: 'GPT-5m',glyph: 'g', family: 'openai',    detail: 'OpenAI · cheap second opinion' },
+  { id: 'gemma',     label: 'Gemma', glyph: 'g', family: 'ollama',    detail: 'Local (Ollama) · private' },
+];
+
+// Pinned actions (operator-favorited quick prompts)
+const PIN_KEY = 'atlas.talkPinned';
+const pinnedActions = ref<string[]>(loadPinned());
+function loadPinned(): string[] {
+  try { const raw = localStorage.getItem(PIN_KEY); if (raw) return JSON.parse(raw); } catch {}
+  return [];
+}
+function persistPinned() { try { localStorage.setItem(PIN_KEY, JSON.stringify(pinnedActions.value)); } catch {} }
+function isPinned(t: string): boolean { return pinnedActions.value.includes((t || '').trim()); }
+function togglePin(t: string) {
+  const v = (t || '').trim();
+  if (!v) return;
+  const i = pinnedActions.value.indexOf(v);
+  if (i >= 0) pinnedActions.value.splice(i, 1);
+  else pinnedActions.value.push(v);
+  pinnedActions.value = pinnedActions.value.slice(-8);
+  persistPinned();
+}
+function unpin(t: string) {
+  const i = pinnedActions.value.indexOf(t);
+  if (i >= 0) pinnedActions.value.splice(i, 1);
+  persistPinned();
+}
+
+// Voice replies via Web Speech Synthesis
+const voiceSupported = ref(typeof window !== 'undefined' && 'speechSynthesis' in window);
+const speakingId = ref<number | null>(null);
+function toggleSpeak(idx: number, text: string) {
+  if (!voiceSupported.value) return;
+  if (speakingId.value === idx) { window.speechSynthesis.cancel(); speakingId.value = null; return; }
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text || '');
+  u.rate = 1.05;
+  u.onend = () => { if (speakingId.value === idx) speakingId.value = null; };
+  u.onerror = () => { if (speakingId.value === idx) speakingId.value = null; };
+  speakingId.value = idx;
+  window.speechSynthesis.speak(u);
+}
+
+// Quick-reply suggestions populated after Atlas's reply
+const quickReplies = ref<string[]>([]);
+async function loadQuickReplies() {
+  const msgs = messages.value;
+  if (msgs.length < 2) { quickReplies.value = []; return; }
+  const last = msgs[msgs.length - 1];
+  const prev = msgs[msgs.length - 2];
+  if (last?.role !== 'atlas' || prev?.role !== 'user') { quickReplies.value = []; return; }
+  quickReplies.value = await fetchSuggestions(prev.text || '', last.text || '');
+}
+
+// Dictation. Drops transcript into the draft input as it speaks.
+const { supported: speechSupported, listening, transcript: speechTranscript, toggle: speechToggle } = useSpeechToText();
+let speechBaseline = '';
+watch(speechTranscript, (t) => {
+  if (!t) return;
+  draft.value = (speechBaseline ? speechBaseline + ' ' : '') + t;
+});
+function onMic() {
+  if (!listening.value) speechBaseline = draft.value.trim();
+  speechToggle();
+}
 
 const threadEl = ref<HTMLDivElement | null>(null);
 const inputEl = ref<HTMLInputElement | null>(null);
@@ -232,6 +366,11 @@ async function send(text: string) {
 
   const fd = new FormData();
   fd.append('message', trimmed);
+  if (forceModel.value) fd.append('forceModel', forceModel.value);
+  // Send last 6 turns so claude --print has chat context (each --print call
+  // is a fresh process; the server inlines these as conversation history).
+  const recentTurns = messages.value.slice(-6).map(m => ({ role: m.role, text: m.text }));
+  if (recentTurns.length) fd.append('priorTurns', JSON.stringify(recentTurns));
   for (const p of pending.value) fd.append('files', p.file, p.file.name);
 
   // clear pending (now consumed)
@@ -253,6 +392,8 @@ async function send(text: string) {
     sending.value = false;
     persist();
     scrollDown();
+    // Refresh quick-reply suggestions for whatever just landed
+    loadQuickReplies();
   }
 }
 
@@ -295,14 +436,14 @@ defineExpose({ send });
   position: relative;
   background: var(--atlas-card-bg);
   border-radius: 20px;
-  padding: 32px;
+  padding: 24px 28px;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   min-height: 0;
 }
-@media (max-width: 1023px) { .card { padding: 24px; } }
+@media (max-width: 1023px) { .card { padding: 20px 22px; } }
 .card.is-compact { gap: 12px; cursor: pointer; }
 .card.is-dragover {
   outline: 2px dashed var(--atlas-blue);
@@ -363,11 +504,14 @@ defineExpose({ send });
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 400px;
-  flex: 1 1 auto;
+  max-height: 320px;
+  min-height: 0;
+  flex: 0 1 auto;
   overflow-y: auto;
   padding-right: 4px;
 }
+.talk__thread:empty,
+.talk__thread:has(.talk__empty) { max-height: none; }
 
 .talk__empty {
   margin: 8px 0 4px;
@@ -481,6 +625,28 @@ defineExpose({ send });
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 }
 .talk__meta.is-error { color: var(--atlas-red); }
+.talk__msg-tools { display: flex; align-items: center; gap: 8px; }
+.is-user .talk__msg-tools { justify-content: flex-end; }
+.is-atlas .talk__msg-tools, .is-error .talk__msg-tools { justify-content: flex-start; }
+.talk__pin-btn, .talk__speak-btn {
+  background: transparent; border: 0; padding: 0;
+  font-size: 11.5px; color: var(--atlas-text-muted, var(--atlas-text-secondary));
+  cursor: pointer; font-family: inherit;
+}
+.talk__pin-btn:hover, .talk__speak-btn:hover { color: var(--atlas-blue); }
+
+.talk__pinned { display: flex; gap: 6px; flex-wrap: wrap; }
+.talk__chip--pinned { background: var(--atlas-card-bg-2); padding-right: 6px; }
+.talk__chip-pin { font-size: 10px; opacity: 0.75; }
+.talk__chip-text { line-height: 1; }
+.talk__chip-x { font-size: 14px; line-height: 1; opacity: 0.5; margin-left: 4px; cursor: pointer; }
+.talk__chip-x:hover { opacity: 1; color: var(--atlas-red); }
+.talk__quick { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.talk__chip--quick {
+  background: transparent; border-color: var(--atlas-blue);
+  color: var(--atlas-blue); padding: 4px 12px;
+}
+.talk__chip--quick:hover:not(:disabled) { background: var(--atlas-blue-soft); }
 
 /* Pending attachments row */
 .talk__pending {
@@ -541,13 +707,14 @@ defineExpose({ send });
   line-height: 1;
 }
 
-/* Composer */
+/* Composer — always pinned visibly at the bottom of the card */
 .talk__composer {
   display: flex;
   gap: 6px;
   align-items: center;
   border-top: 1px solid var(--atlas-hairline);
-  padding-top: 16px;
+  padding-top: 14px;
+  flex: none;
 }
 .talk__clip,
 .talk__send {
@@ -572,19 +739,70 @@ defineExpose({ send });
 
 .talk__file-input { display: none; }
 
+.talk__mic {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--atlas-hairline);
+  color: var(--atlas-text-secondary);
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 0;
+}
+.talk__mic:hover:not(:disabled) { color: var(--atlas-text-primary); border-color: var(--atlas-text-secondary); }
+.talk__mic.is-on { color: var(--atlas-red); border-color: var(--atlas-red); animation: mic-pulse 1.4s infinite ease-in-out; }
+.talk__mic:disabled { opacity: 0.4; cursor: not-allowed; }
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255,59,48,0.30); }
+  50%      { box-shadow: 0 0 0 6px rgba(255,59,48,0); }
+}
+
+.talk__models {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.talk__chip-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--atlas-card-bg-2, #FFF);
+  border: 1px solid var(--atlas-hairline);
+  color: var(--atlas-text-primary);
+  font-size: 12.5px;
+  font-weight: 500;
+  font-family: inherit;
+  padding: 4px 12px 4px 4px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 100ms ease, background-color 100ms ease, transform 100ms ease;
+}
+.talk__chip-model:hover { transform: translateY(-1px); }
+.talk__chip-label { line-height: 1; }
+.talk__chip-model.is-active {
+  border-color: var(--atlas-blue);
+  background: var(--atlas-blue-soft);
+  color: var(--atlas-blue);
+}
+
 .talk__input {
-  flex: 1;
+  flex: 1 1 auto;
   height: 40px;
   padding: 0 14px;
   font-size: 15px;
   font-family: inherit;
   color: var(--atlas-text-primary);
-  background: var(--atlas-page-bg);
+  background: var(--atlas-card-bg-2, #FFFFFF);
   border: 1px solid var(--atlas-hairline);
   border-radius: 12px;
   outline: none;
   transition: border-color 0.12s ease, box-shadow 0.12s ease;
   min-width: 0;
+  width: 100%;
 }
 .talk__input:focus {
   border-color: var(--atlas-blue);

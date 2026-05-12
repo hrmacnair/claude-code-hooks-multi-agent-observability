@@ -1,15 +1,55 @@
 import { initDatabase, insertEvent, getFilterOptions, getRecentEvents, updateEventHITLResponse } from './db';
 import type { HookEvent, HumanInTheLoopResponse } from './types';
-import { 
-  createTheme, 
-  updateThemeById, 
-  getThemeById, 
-  searchThemes, 
-  deleteThemeById, 
-  exportThemeById, 
+import {
+  createTheme,
+  updateThemeById,
+  getThemeById,
+  searchThemes,
+  deleteThemeById,
+  exportThemeById,
   importTheme,
-  getThemeStats 
+  getThemeStats
 } from './theme';
+import {
+  listProposals,
+  loadProposal,
+  approveProposal,
+  rejectProposal,
+  deferProposal,
+  rollbackProposal,
+} from './atlas-proposals';
+import {
+  getToday,
+  addOperatorItem,
+  markDone,
+  pinItem,
+  deferItem,
+  approveItem,
+  rejectItem,
+  archiveDoneAndRefresh,
+  renderTelegramDigest,
+} from './atlas-today';
+import {
+  handleGitHubWebhook,
+  handleStripeWebhook,
+  handleNtfyWebhook,
+  handleManualEvent,
+  dispatchLocal,
+} from './atlas-events';
+import {
+  listCandidates,
+  getCandidate,
+  listTrials,
+  listSweeps,
+  installCandidate,
+  declineCandidate,
+  markTrialConcern,
+  dailyTrialMaintenance,
+} from './atlas-scout';
+import { analyzeDrift, getLatestDriftReport } from './atlas-drift';
+import { regenerateWhitepaper, whitepaperMeta } from './atlas-whitepaper';
+import { portabilityState, backupNow } from './atlas-portability';
+import { listMissions, getDivisionDetail, recentRoutingLog, recentCorrections, searchAudit, spendDetail, spendByModel, githubFeed, listAllAgents, generateSuggestions } from './atlas-views';
 
 // Initialize database
 initDatabase();
@@ -26,6 +66,72 @@ try {
   }
 } catch (err) {
   console.warn('[atlas] bot-tg/.env not loaded, talk endpoint may fail:', (err as Error).message);
+}
+
+// --- Division inference for inbound events --------------------------------
+//
+// Every Claude Code hook fires `send_event.py --source-app atlas`, so the
+// raw event payload doesn't tell us WHICH project the session is in. We
+// derive a `division` field by matching payload.cwd against
+// ~/atlas/divisions/*/division.yaml#scope.paths. Cached + refreshed on
+// division.yaml mtime change.
+
+import { readFileSync as _readFileSync, existsSync as _existsSync, readdirSync as _readdirSync, statSync as _statSync } from 'fs';
+import { join as _join } from 'path';
+
+const _DIVISIONS_DIR = '/Users/hrmacnair/atlas/divisions';
+let _divisionPathCache: { mtime: number; map: Array<{ division: string; path: string }> } = { mtime: 0, map: [] };
+
+function _refreshDivisionPaths() {
+  let newest = 0;
+  let dirs: string[] = [];
+  try {
+    dirs = _readdirSync(_DIVISIONS_DIR).filter(n => _existsSync(_join(_DIVISIONS_DIR, n, 'division.yaml')));
+  } catch { return; }
+  for (const n of dirs) {
+    try { const t = _statSync(_join(_DIVISIONS_DIR, n, 'division.yaml')).mtimeMs; if (t > newest) newest = t; } catch {}
+  }
+  if (newest === _divisionPathCache.mtime && _divisionPathCache.map.length > 0) return;
+  // Re-parse via uv-pyyaml. Simple ad-hoc shell to avoid taking on async work here.
+  const { spawnSync } = require('child_process');
+  const map: Array<{ division: string; path: string }> = [];
+  for (const n of dirs) {
+    const r = spawnSync('/opt/homebrew/bin/uv',
+      ['run', '--quiet', '--with', 'pyyaml', 'python3', '-c',
+       'import sys,json,yaml; d=yaml.safe_load(open(sys.argv[1])); print(json.dumps((d or {}).get("scope",{}).get("paths",[])))',
+       _join(_DIVISIONS_DIR, n, 'division.yaml')],
+      { encoding: 'utf8' });
+    if (r.status !== 0) continue;
+    let paths: string[] = [];
+    try { paths = JSON.parse(r.stdout); } catch { continue; }
+    for (const p of paths) {
+      if (typeof p !== 'string') continue;
+      const resolved = p.replace(/^~/, process.env.HOME || '').replace(/\/\*\*$/, '');
+      map.push({ division: n, path: resolved });
+    }
+  }
+  // Sort longest-path-first so more specific scope wins (atlas-meta's
+  // ~/atlas catches everything, but ~/atlas/projects/margin matches first).
+  map.sort((a, b) => b.path.length - a.path.length);
+  _divisionPathCache = { mtime: newest, map };
+}
+
+function inferDivision(cwd?: string): string | null {
+  if (!cwd) return null;
+  _refreshDivisionPaths();
+  for (const m of _divisionPathCache.map) {
+    if (cwd === m.path || cwd.startsWith(m.path + '/')) return m.division;
+  }
+  return null;
+}
+
+function enrichEventDivision(event: any): void {
+  if (!event?.payload) return;
+  if (event.payload.division) return;  // already set by upstream
+  const cwd = event.payload.cwd;  // Claude Code sets this on PreToolUse/PostToolUse
+  if (!cwd || typeof cwd !== 'string') return;
+  const div = inferDivision(cwd);
+  if (div) event.payload.division = div;
 }
 
 // --- Atlas dashboard stats ---
@@ -299,7 +405,9 @@ async function callAnthropicVision(opts: {
 // for pure-text turns.
 async function atlasTalk(
   message: string,
-  files: SavedFile[] = []
+  files: SavedFile[] = [],
+  forceModel?: string,
+  priorTurns: Array<{ role: 'user' | 'atlas' | 'error'; text: string }> = []
 ): Promise<{ reply: string; decision: any; attachments_processed: string[] }> {
   const router = await import('/Users/hrmacnair/atlas/bot-tg/router.js');
 
@@ -317,8 +425,18 @@ async function atlasTalk(
     routedMessage += `\n[Attached: ${f.name}]`;
   }
 
-  // Inline text/code/markdown into the enriched prompt (first 50KB per file)
-  let enrichedMessage = message;
+  // Prepend prior chat turns so claude --print sees the conversation history
+  // (each --print call is a fresh process; we manually feed context).
+  let enrichedMessage = '';
+  if (priorTurns && priorTurns.length > 0) {
+    enrichedMessage += '## Prior conversation\n\n';
+    for (const t of priorTurns) {
+      const role = t.role === 'user' ? 'Operator' : (t.role === 'atlas' ? 'Atlas' : 'Error');
+      enrichedMessage += `${role}: ${(t.text || '').slice(0, 2000)}\n\n`;
+    }
+    enrichedMessage += '## New message\n\n';
+  }
+  enrichedMessage += message;
   for (const f of textFiles) {
     try {
       const content = await Bun.file(f.path).text();
@@ -333,6 +451,12 @@ async function atlasTalk(
   }
 
   let decision = await router.routeMessage(routedMessage);
+
+  // forceModel override (operator picked a specific model in the dashboard)
+  const VALID = new Set(['opus','sonnet','haiku','gpt5','gpt5-mini','gemma']);
+  if (forceModel && VALID.has(forceModel)) {
+    decision = { ...decision, model: forceModel, rationale: `forced to ${forceModel} via dashboard picker` };
+  }
 
   // Auto-upgrade for vision
   if (images.length > 0 && decision.model === 'haiku') {
@@ -610,7 +734,7 @@ const server = Bun.serve({
     if (url.pathname === '/events' && req.method === 'POST') {
       try {
         const event: HookEvent = await req.json();
-        
+
         // Validate required fields
         if (!event.source_app || !event.session_id || !event.hook_event_type || !event.payload) {
           return new Response(JSON.stringify({ error: 'Missing required fields' }), {
@@ -618,7 +742,12 @@ const server = Bun.serve({
             headers: { ...headers, 'Content-Type': 'application/json' }
           });
         }
-        
+
+        // Enrich with division derived from cwd / transcript_path so Margin /
+        // Industry / atlas-meta work surfaces in the dashboard's per-project
+        // filters even though every Claude Code hook fires source_app: "atlas".
+        enrichEventDivision(event);
+
         // Insert event into database
         const savedEvent = insertEvent(event);
         
@@ -693,6 +822,330 @@ const server = Bun.serve({
       });
     }
 
+    // ---- Layer 5a: proposal queue ----
+    // GET /api/atlas/proposals — list all proposals across pending/queued/applied/rejected.
+    if (url.pathname === '/api/atlas/proposals' && req.method === 'GET') {
+      try {
+        const items = listProposals();
+        return new Response(JSON.stringify({ items }), {
+          headers: { ...headers, 'Content-Type': 'application/json' }
+        });
+      } catch (err: any) {
+        return new Response(JSON.stringify({ error: err.message }), {
+          status: 500, headers: { ...headers, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // GET /api/atlas/proposals/:id — single proposal (partial-prefix ID match)
+    const propGet = url.pathname.match(/^\/api\/atlas\/proposals\/([^\/]+)$/);
+    if (propGet && req.method === 'GET') {
+      const found = loadProposal(propGet[1]);
+      if (!found) {
+        return new Response(JSON.stringify({ error: 'not found' }), {
+          status: 404, headers: { ...headers, 'Content-Type': 'application/json' }
+        });
+      }
+      return new Response(JSON.stringify({ id: propGet[1], status: found.status, data: found.data }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // ---- New views (12-features pass) ----
+    if (url.pathname === '/api/atlas/missions' && req.method === 'GET') {
+      return new Response(JSON.stringify({ missions: listMissions() }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    const divMatch = url.pathname.match(/^\/api\/atlas\/divisions\/([^\/]+)$/);
+    if (divMatch && req.method === 'GET') {
+      const data = getDivisionDetail(divMatch[1]);
+      if (!data) {
+        return new Response(JSON.stringify({ error: 'not found' }), {
+          status: 404, headers: { ...headers, 'Content-Type': 'application/json' }
+        });
+      }
+      return new Response(JSON.stringify(data), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/routing/log' && req.method === 'GET') {
+      const days = parseInt(url.searchParams.get('days') || '7');
+      const limit = parseInt(url.searchParams.get('limit') || '200');
+      return new Response(JSON.stringify({ entries: recentRoutingLog(days, limit) }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/routing/corrections' && req.method === 'GET') {
+      const days = parseInt(url.searchParams.get('days') || '14');
+      return new Response(JSON.stringify({ entries: recentCorrections(days, 50) }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/audit/search' && req.method === 'GET') {
+      const filter = {
+        division: url.searchParams.get('division') || undefined,
+        agent: url.searchParams.get('agent') || undefined,
+        outcome: url.searchParams.get('outcome') || undefined,
+        action: url.searchParams.get('action') || undefined,
+        q: url.searchParams.get('q') || undefined,
+        from: url.searchParams.get('from') || undefined,
+        to: url.searchParams.get('to') || undefined,
+        limit: parseInt(url.searchParams.get('limit') || '200'),
+      };
+      return new Response(JSON.stringify({ entries: searchAudit(filter), filter }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/spend/detail' && req.method === 'GET') {
+      const days = parseInt(url.searchParams.get('days') || '14');
+      return new Response(JSON.stringify(spendDetail(days)), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/spend/models' && req.method === 'GET') {
+      const days = parseInt(url.searchParams.get('days') || '14');
+      return new Response(JSON.stringify(spendByModel(days)), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/github/feed' && req.method === 'GET') {
+      const data = await githubFeed();
+      return new Response(JSON.stringify(data), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/agents' && req.method === 'GET') {
+      return new Response(JSON.stringify({ agents: listAllAgents() }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/suggestions' && req.method === 'POST') {
+      let body: any = {};
+      try { body = await req.json(); } catch {}
+      const suggestions = await generateSuggestions(body.last_user || '', body.last_reply || '');
+      return new Response(JSON.stringify({ suggestions }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // ---- Portability + backups ----
+    if (url.pathname === '/api/atlas/portability' && req.method === 'GET') {
+      return new Response(JSON.stringify(portabilityState()), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/portability/backup-now' && req.method === 'POST') {
+      const r = await backupNow();
+      return new Response(JSON.stringify(r), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // ---- White paper auto-publish ----
+    if (url.pathname === '/api/atlas/whitepaper' && req.method === 'GET') {
+      return new Response(JSON.stringify(whitepaperMeta()), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/whitepaper/regenerate' && req.method === 'POST') {
+      let body: any = {};
+      try { body = await req.json(); } catch {}
+      const r = regenerateWhitepaper(body.trigger || 'manual');
+      return new Response(JSON.stringify(r), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // ---- Layer 5b: drift detection ----
+    if (url.pathname === '/api/atlas/drift/latest' && req.method === 'GET') {
+      const r = getLatestDriftReport();
+      if (!r) return new Response(JSON.stringify({ report: null }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+      return new Response(JSON.stringify({ report: r }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/drift/run' && req.method === 'POST') {
+      let body: any = {};
+      try { body = await req.json(); } catch {}
+      const days = Number.isFinite(body.days) ? body.days : 7;
+      const r = analyzeDrift(days);
+      return new Response(JSON.stringify(r), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // ---- Layer 5c: Scout (ecosystem discovery) ----
+    if (url.pathname === '/api/atlas/scout' && req.method === 'GET') {
+      try {
+        const candidates = listCandidates();
+        const trials = listTrials();
+        const sweeps = listSweeps();
+        return new Response(JSON.stringify({ candidates, trials, sweeps }), {
+          headers: { ...headers, 'Content-Type': 'application/json' }
+        });
+      } catch (err: any) {
+        return new Response(JSON.stringify({ error: err.message }), {
+          status: 500, headers: { ...headers, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+    const scoutGet = url.pathname.match(/^\/api\/atlas\/scout\/([^\/]+)$/);
+    if (scoutGet && req.method === 'GET') {
+      const c = getCandidate(scoutGet[1]);
+      if (!c) {
+        return new Response(JSON.stringify({ error: 'not found' }), {
+          status: 404, headers: { ...headers, 'Content-Type': 'application/json' }
+        });
+      }
+      return new Response(JSON.stringify({ data: c.data }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    const scoutAction = url.pathname.match(/^\/api\/atlas\/scout\/([^\/]+)\/(install|decline|concern)$/);
+    if (scoutAction && req.method === 'POST') {
+      const id = scoutAction[1];
+      const action = scoutAction[2];
+      let body: any = {};
+      try { body = await req.json(); } catch {}
+      const surface = body.surface || 'dashboard';
+      const approver = body.approver || 'operator';
+      const note = body.note || '';
+      let result: { ok: boolean; message: string; install_command?: string };
+      if (action === 'install')      result = installCandidate(id, approver, surface);
+      else if (action === 'decline') result = declineCandidate(id, approver, surface, note);
+      else if (action === 'concern') result = markTrialConcern(id, note || 'unspecified');
+      else                            result = { ok: false, message: 'unknown action' };
+      return new Response(JSON.stringify(result), {
+        status: result.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/scout/maintenance' && req.method === 'POST') {
+      const r = dailyTrialMaintenance();
+      return new Response(JSON.stringify({ ok: true, ...r }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // ---- Layer 3: inbound webhooks (GitHub / Stripe / ntfy / manual) ----
+    if (url.pathname === '/api/atlas/events/inbound/github' && req.method === 'POST') {
+      return await handleGitHubWebhook(req);
+    }
+    if (url.pathname === '/api/atlas/events/inbound/stripe' && req.method === 'POST') {
+      return await handleStripeWebhook(req);
+    }
+    const ntfyMatch = url.pathname.match(/^\/api\/atlas\/events\/inbound\/ntfy\/([^\/]+)$/);
+    if (ntfyMatch && req.method === 'POST') {
+      return await handleNtfyWebhook(req, decodeURIComponent(ntfyMatch[1]));
+    }
+    if (url.pathname === '/api/atlas/events/inbound/manual' && req.method === 'POST') {
+      const tgChat = req.headers.get('x-telegram-chat-id');
+      return await handleManualEvent(req, tgChat);
+    }
+    // POST /api/atlas/events/dispatch — internal-only, called by the file watcher
+    // subprocess and by Scout (Layer 5c). No auth — relies on localhost-only port.
+    if (url.pathname === '/api/atlas/events/dispatch' && req.method === 'POST') {
+      let body: any = {};
+      try { body = await req.json(); } catch {}
+      const r = dispatchLocal(body.event || '', body.payload || {});
+      return new Response(JSON.stringify(r), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // ---- Layer 4: Today queue ----
+    // GET /api/atlas/today — ranked queue + completed-today + (optional) deferred
+    if (url.pathname === '/api/atlas/today' && req.method === 'GET') {
+      try {
+        const includeDeferred = url.searchParams.get('deferred') === '1';
+        const data = getToday({ includeDeferred });
+        return new Response(JSON.stringify(data), {
+          headers: { ...headers, 'Content-Type': 'application/json' }
+        });
+      } catch (err: any) {
+        return new Response(JSON.stringify({ error: err.message }), {
+          status: 500, headers: { ...headers, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // GET /api/atlas/today/digest — terse Telegram-format string
+    if (url.pathname === '/api/atlas/today/digest' && req.method === 'GET') {
+      const digest = renderTelegramDigest();
+      return new Response(JSON.stringify({ digest }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // POST /api/atlas/today/add — operator adds a free-text item
+    if (url.pathname === '/api/atlas/today/add' && req.method === 'POST') {
+      let body: any = {};
+      try { body = await req.json(); } catch {}
+      const text = body.text || body.message || '';
+      const urgency = body.urgency || 'green';
+      const surface = body.surface || 'unknown';
+      const r = addOperatorItem(text, urgency, surface);
+      return new Response(JSON.stringify(r), {
+        status: r.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // POST /api/atlas/today/archive — manual trigger for the midnight job
+    if (url.pathname === '/api/atlas/today/archive' && req.method === 'POST') {
+      const r = archiveDoneAndRefresh();
+      return new Response(JSON.stringify({ ok: true, ...r }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // POST /api/atlas/today/:id/{approve,reject,defer,done,pin}
+    const todayAction = url.pathname.match(/^\/api\/atlas\/today\/([^\/]+)\/(approve|reject|defer|done|pin)$/);
+    if (todayAction && req.method === 'POST') {
+      const id = todayAction[1];
+      const action = todayAction[2];
+      let body: any = {};
+      try { body = await req.json(); } catch {}
+      const surface = body.surface || 'dashboard';
+      const note = body.note || '';
+      let result: { ok: boolean; message: string };
+      if (action === 'approve')     result = approveItem(id, surface);
+      else if (action === 'reject') result = rejectItem(id, surface, note);
+      else if (action === 'defer')  result = deferItem(id, surface);
+      else if (action === 'done')   result = markDone(id, surface);
+      else if (action === 'pin')    result = pinItem(id, surface);
+      else                          result = { ok: false, message: 'unknown action' };
+      return new Response(JSON.stringify(result), {
+        status: result.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // POST /api/atlas/proposals/:id/{approve,reject,defer,rollback}
+    const propAction = url.pathname.match(/^\/api\/atlas\/proposals\/([^\/]+)\/(approve|reject|defer|rollback)$/);
+    if (propAction && req.method === 'POST') {
+      const id = propAction[1];
+      const action = propAction[2] as 'approve' | 'reject' | 'defer' | 'rollback';
+      let body: any = {};
+      try { body = await req.json(); } catch {}
+      const surface = body.surface || 'dashboard';
+      const approver = body.approver || 'operator';
+      const note = body.note || '';
+      let result: { ok: boolean; message: string; applied_path?: string };
+      if (action === 'approve')      result = approveProposal(id, approver, surface);
+      else if (action === 'reject')  result = rejectProposal(id, approver, surface, note);
+      else if (action === 'defer')   result = deferProposal(id, approver, surface);
+      else if (action === 'rollback') result = rollbackProposal(id, approver, surface);
+      else                            result = { ok: false, message: 'unknown action' };
+      return new Response(JSON.stringify(result), {
+        status: result.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
     // GET /api/atlas/briefs - walk ~/atlas/briefs/archive/<date>/<slug>.html
     if (url.pathname === '/api/atlas/briefs' && req.method === 'GET') {
       const briefs = await getAtlasBriefs();
@@ -741,9 +1194,16 @@ const server = Bun.serve({
         let message = '';
         let savedFiles: SavedFile[] = [];
 
+        let forceModel: string | undefined;
+        let priorTurns: any[] = [];
         if (contentType.includes('multipart/form-data')) {
           const form = await req.formData();
           message = String(form.get('message') || '').trim();
+          forceModel = (form.get('forceModel') as string) || undefined;
+          const ptRaw = form.get('priorTurns');
+          if (typeof ptRaw === 'string' && ptRaw) {
+            try { priorTurns = JSON.parse(ptRaw); } catch {}
+          }
           const fileEntries = form.getAll('files').filter((v): v is File => v instanceof File);
           if (fileEntries.length > MAX_FILES) {
             return new Response(JSON.stringify({ error: `Max ${MAX_FILES} files per message` }), {
@@ -764,8 +1224,10 @@ const server = Bun.serve({
           }
           savedFiles = await saveUploads(fileEntries);
         } else {
-          const body = await req.json() as { message?: string };
+          const body = await req.json() as { message?: string; forceModel?: string; priorTurns?: any[] };
           message = String(body?.message || '').trim();
+          forceModel = body?.forceModel;
+          priorTurns = Array.isArray(body?.priorTurns) ? body!.priorTurns : [];
         }
 
         if (!message && savedFiles.length === 0) {
@@ -774,7 +1236,7 @@ const server = Bun.serve({
           });
         }
 
-        const result = await atlasTalk(message, savedFiles);
+        const result = await atlasTalk(message, savedFiles, forceModel, priorTurns);
         return new Response(JSON.stringify(result), {
           headers: { ...headers, 'Content-Type': 'application/json' }
         });

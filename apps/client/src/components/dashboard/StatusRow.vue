@@ -15,6 +15,11 @@
       <span class="status-row__brief-text">{{ latestBriefTitle }}</span>
     </a>
     <span v-else class="status-row__item status-row__item--muted">no brief yet</span>
+    <span class="status-row__sep">·</span>
+    <span class="status-row__host" :title="`Connected to ${hostName} via ${connection}`">
+      <span class="status-row__host-dot" :class="`status-row__host-dot--${connection}`"></span>
+      {{ hostLabel }}
+    </span>
   </div>
 </template>
 
@@ -46,6 +51,23 @@ function scrollTo(id: string) {
   const el = document.getElementById(id);
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
+
+// Connection awareness: localhost / tailscale (100.x) / LAN / other.
+const hostName = computed(() => (typeof window !== 'undefined' ? window.location.hostname : ''));
+const connection = computed<'local' | 'tailscale' | 'lan' | 'other'>(() => {
+  const h = hostName.value;
+  if (!h || h === 'localhost' || h === '127.0.0.1') return 'local';
+  if (/^100\.[0-9]+\./.test(h)) return 'tailscale';
+  if (/^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(h)) return 'lan';
+  return 'other';
+});
+const hostLabel = computed(() => {
+  const c = connection.value;
+  if (c === 'local') return 'local';
+  if (c === 'tailscale') return 'tailscale';
+  if (c === 'lan') return 'lan';
+  return hostName.value || 'remote';
+});
 </script>
 
 <style scoped>
@@ -104,4 +126,18 @@ function scrollTo(id: string) {
   white-space: nowrap;
   max-width: 280px;
 }
+
+.status-row__host {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--atlas-text-muted, var(--atlas-text-secondary));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.status-row__host-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--atlas-text-muted); }
+.status-row__host-dot--tailscale { background: #845EF7; }
+.status-row__host-dot--local     { background: var(--atlas-green); }
+.status-row__host-dot--lan       { background: var(--atlas-blue); }
+.status-row__host-dot--other     { background: var(--atlas-yellow); }
 </style>
