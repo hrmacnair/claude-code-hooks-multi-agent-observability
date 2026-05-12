@@ -514,8 +514,14 @@ export function spawnTask(id: string): { ok: boolean; pid?: number; error?: stri
     return { ok: false, error: `unsupported backend: ${cfg.backend}` };
   }
 
-  // Open a writable file descriptor for the log via Bun
+  // Open a writable file descriptor for the log via Bun.
+  // Claude stream-json: parse on the fly. Pretty text → .log; raw JSON → .jsonl sidecar.
+  // Codex / Ollama: stdout is already human text — pass through verbatim.
   const writer = Bun.file(logPath).writer();
+  const jsonlPath = `${logPath}.jsonl`;
+  const isStreamJson = cfg.backend === 'anthropic';
+  const jsonlWriter = isStreamJson ? Bun.file(jsonlPath).writer() : null;
+
   writer.write(
     `# task ${id}\n` +
     `# project: ${task.project_name}\n` +
@@ -534,28 +540,107 @@ export function spawnTask(id: string): { ok: boolean; pid?: number; error?: stri
     detached: false,
   });
 
+  // Line buffer for stream-json (chunks may split mid-line)
+  let stdoutBuf = '';
+
+  function renderStreamJsonLine(line: string): string {
+    // Render a single stream-json message into a one-line-or-block of pretty text.
+    let m: any;
+    try { m = JSON.parse(line); } catch { return ''; }
+    if (!m || typeof m !== 'object') return '';
+    const t = m.type;
+    if (t === 'system' && m.subtype === 'init') {
+      const tools = (m.tools || []).slice(0, 6).join(', ') + ((m.tools || []).length > 6 ? '…' : '');
+      return `\x1b[2m· system: model=${m.model || '?'}  cwd=${m.cwd || '?'}  tools=[${tools}]\x1b[0m\n`;
+    }
+    if (t === 'assistant' && m.message?.content) {
+      const parts: string[] = [];
+      for (const c of m.message.content) {
+        if (c.type === 'text' && c.text) parts.push(c.text);
+        else if (c.type === 'tool_use') {
+          const name = c.name || '?';
+          const inp = c.input ? JSON.stringify(c.input).slice(0, 140) : '';
+          parts.push(`\x1b[36m▸ ${name}\x1b[0m ${inp}`);
+        }
+      }
+      return parts.join('\n') + (parts.length ? '\n' : '');
+    }
+    if (t === 'user' && m.message?.content) {
+      // Tool results
+      const parts: string[] = [];
+      for (const c of m.message.content) {
+        if (c.type === 'tool_result') {
+          let r = '';
+          if (typeof c.content === 'string') r = c.content;
+          else if (Array.isArray(c.content)) {
+            r = c.content.map((x: any) => x.text || '').join('').trim();
+          }
+          if (r) {
+            const trimmed = r.length > 1200 ? r.slice(0, 1200) + `\n  …(+${r.length - 1200} chars)` : r;
+            parts.push(`\x1b[2m  ${trimmed.split('\n').join('\n  ')}\x1b[0m`);
+          }
+        }
+      }
+      return parts.join('\n') + (parts.length ? '\n' : '');
+    }
+    if (t === 'result') {
+      const cost = typeof m.total_cost_usd === 'number' ? `$${m.total_cost_usd.toFixed(4)}` : '?';
+      const dur = m.duration_ms ? `${(m.duration_ms / 1000).toFixed(1)}s` : '?';
+      const ok = m.is_error ? '\x1b[31m✗ error\x1b[0m' : '\x1b[32m✓ done\x1b[0m';
+      return `\x1b[2m· ${ok}  ${dur}  ${cost}\x1b[0m\n`;
+    }
+    return '';
+  }
+
   const onChunk = (kind: 'out' | 'err', buf: Buffer) => {
     const text = buf.toString('utf8');
-    writer.write(text);
-    broadcast({ type: 'workspace.log', data: { taskId: id, kind, text } });
+    if (kind === 'err' || !isStreamJson) {
+      // Pass through unchanged
+      writer.write(text);
+      broadcast({ type: 'workspace.log', data: { taskId: id, kind, text } });
+      return;
+    }
+    // stream-json: split into lines, archive each as JSONL, render pretty
+    stdoutBuf += text;
+    const lines = stdoutBuf.split('\n');
+    stdoutBuf = lines.pop() || ''; // keep incomplete last line
+    let pretty = '';
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      jsonlWriter?.write(line + '\n');
+      const out = renderStreamJsonLine(line);
+      if (out) pretty += out;
+    }
+    if (pretty) {
+      writer.write(pretty);
+      broadcast({ type: 'workspace.log', data: { taskId: id, kind, text: pretty } });
+    }
   };
   child.stdout?.on('data', (b: Buffer) => onChunk('out', b));
   child.stderr?.on('data', (b: Buffer) => onChunk('err', b));
 
   child.on('exit', async (code) => {
     const exitCode = code ?? -1;
+    // Flush trailing partial line if any
+    if (isStreamJson && stdoutBuf.trim()) {
+      jsonlWriter?.write(stdoutBuf + '\n');
+      const out = renderStreamJsonLine(stdoutBuf);
+      if (out) { writer.write(out); broadcast({ type: 'workspace.log', data: { taskId: id, kind: 'out', text: out } }); }
+      stdoutBuf = '';
+    }
     writer.write(`\n----\n# exited: ${new Date().toISOString()} (code ${exitCode})\n`);
     writer.end();
+    jsonlWriter?.end();
     liveProcs.delete(id);
     const d = getDB();
     const nextStatus: WorkspaceTask['status'] = exitCode === 0 ? 'review' : 'failed';
 
-    // Parse cost from stream-json log (Claude backend only)
+    // Parse cost from sidecar JSONL (Claude backend only)
     let cost: CostUsage | null = null;
     if (cfg.backend === 'anthropic') {
       try {
-        const logText = await Bun.file(logPath).text();
-        cost = parseStreamJsonCost(logText);
+        const jsonlText = await Bun.file(jsonlPath).text();
+        cost = parseStreamJsonCost(jsonlText);
       } catch { /* non-fatal */ }
     }
 
