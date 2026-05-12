@@ -233,4 +233,17 @@ function onSend() {
 }
 .dock__send:disabled { opacity: 0.4; cursor: not-allowed; }
 .dock__send:hover:not(:disabled) { opacity: 0.92; }
+
+@media (max-width: 600px) {
+  .dock__bar { padding: 12px; gap: 8px; min-height: 48px; }
+  .dock__hint { display: none; }
+  .dock__body { padding: 0 12px 12px; padding-top: 10px; }
+  .dock__chip { max-width: 100%; padding: 8px 12px; font-size: 13px; }
+  .dock__chip-title { max-width: 60vw; }
+  .dock__textarea { font-size: 16px; min-height: 80px; }
+  .dock__foot { flex-wrap: wrap; gap: 10px; }
+  .dock__mode { flex: 1 1 100%; }
+  .dock__mode input { flex: 1; width: auto; font-size: 16px; padding: 10px 12px; min-height: 40px; }
+  .dock__send { flex: 1 1 100%; margin-left: 0; padding: 12px 18px; font-size: 15px; min-height: 44px; }
+}
 </style>

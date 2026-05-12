@@ -124,4 +124,20 @@ async function onSave() {
 .mem__btn--primary { background: var(--atlas-blue); border-color: var(--atlas-blue); color: white; }
 .mem__btn--primary:disabled { opacity: 0.4; cursor: not-allowed; }
 .mem__btn--ghost { color: var(--atlas-text-secondary); }
+
+@media (max-width: 600px) {
+  .mem-bg { padding: 0; align-items: stretch; place-items: stretch; }
+  .mem {
+    border-radius: 0;
+    padding: max(16px, env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+    max-width: none;
+    min-height: 100vh;
+  }
+  .mem__title { font-size: 19px; }
+  .mem__x { font-size: 22px; padding: 8px 12px; min-width: 44px; min-height: 44px; }
+  .mem__ta { font-size: 16px; min-height: 50vh; }
+  .mem__foot { flex-wrap: wrap; gap: 8px; }
+  .mem__bytes { flex: 1 1 100%; margin-right: 0; }
+  .mem__btn { flex: 1 1 45%; padding: 12px 16px; font-size: 14px; min-height: 44px; }
+}
 </style>

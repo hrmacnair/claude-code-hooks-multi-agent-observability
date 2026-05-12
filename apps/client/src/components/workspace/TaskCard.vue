@@ -167,4 +167,11 @@ function onDragEnd() { dragging.value = false; }
   color: var(--atlas-red, #ff453a);
   margin-left: 4px;
 }
+
+@media (max-width: 600px) {
+  .ws-card { padding: 14px; gap: 10px; }
+  .ws-card__title { font-size: 15px; }
+  .ws-card__prompt { font-size: 13px; -webkit-line-clamp: 3; }
+  .ws-card__btn { font-size: 13px; padding: 8px 14px; min-height: 36px; }
+}
 </style>

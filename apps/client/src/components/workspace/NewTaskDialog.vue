@@ -64,6 +64,11 @@
         </label>
       </div>
 
+      <label class="field-checkbox">
+        <input type="checkbox" v-model="planFirst" />
+        <span><strong>Plan first</strong> — first task outputs a plan only; "Approve & Execute" follow-up runs it. (Safer for ambiguous prompts.)</span>
+      </label>
+
       <p v-if="error" class="dialog__error">{{ error }}</p>
 
       <footer class="dialog__foot">
@@ -101,8 +106,15 @@ const title = ref('');
 const prompt = ref('');
 const model = ref('sonnet');
 const mode = ref<'safe' | 'auto'>('safe');
+const planFirst = ref(false);
 const saving = ref(false);
 const error = ref<string | null>(null);
+
+const PLAN_PREFIX =
+`PLAN MODE. Do not modify any files yet. Read whatever you need with the Read tool, then output a numbered plan (1-8 steps) for the request below. Each step: file path, function/section to touch, what changes, and any risks. End with "Ready to execute on approval."
+
+REQUEST:
+`;
 
 watch(() => props.projects, (p) => {
   if (!projectId.value && p.length) projectId.value = p[0].id;
@@ -116,10 +128,12 @@ function doSubmit(run: boolean) {
   if (!canSubmit.value) return;
   error.value = null;
   saving.value = true;
+  const useTitle = planFirst.value ? `[Plan] ${title.value.trim()}` : title.value.trim();
+  const usePrompt = planFirst.value ? PLAN_PREFIX + prompt.value.trim() : prompt.value.trim();
   emit('create', {
     project_id: projectId.value,
-    title: title.value.trim(),
-    prompt: prompt.value.trim(),
+    title: useTitle,
+    prompt: usePrompt,
     model: model.value,
     mode: mode.value,
   }, run);
@@ -213,6 +227,21 @@ function doSubmit(run: boolean) {
   gap: 12px;
 }
 
+.field-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--atlas-text-secondary);
+  line-height: 1.45;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--atlas-hairline);
+  cursor: pointer;
+}
+.field-checkbox input { margin-top: 2px; }
+.field-checkbox strong { color: var(--atlas-text-strong); }
+
 .dialog__foot {
   display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px;
 }
@@ -241,5 +270,25 @@ function doSubmit(run: boolean) {
   margin: 0;
   font-size: 13px;
   color: var(--atlas-red, #ff453a);
+}
+
+@media (max-width: 600px) {
+  .dialog-bg { padding: 0; align-items: stretch; place-items: stretch; }
+  .dialog {
+    border-radius: 0;
+    padding: max(16px, env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+    max-width: none;
+    min-height: 100vh;
+    gap: 12px;
+  }
+  .dialog__head h3 { font-size: 20px; }
+  .dialog__x { font-size: 22px; padding: 8px 12px; min-width: 44px; min-height: 44px; }
+  .field__input { font-size: 16px; padding: 12px; min-height: 44px; }
+  .field__input--textarea { min-height: 140px; }
+  .field-row { grid-template-columns: 1fr; gap: 10px; }
+  .dialog__foot { flex-wrap: wrap; gap: 8px; }
+  .dialog__btn { flex: 1 1 100%; padding: 14px 16px; font-size: 15px; min-height: 44px; }
+  .dialog__btn--ghost { order: 99; }
+  .templates__chip { padding: 8px 12px; font-size: 13px; min-height: 38px; }
 }
 </style>

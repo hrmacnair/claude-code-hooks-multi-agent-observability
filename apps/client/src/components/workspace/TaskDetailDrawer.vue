@@ -154,4 +154,20 @@ watch(logText, () => {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+@media (max-width: 600px) {
+  .drawer-bg { background: var(--atlas-page-bg); }
+  .drawer {
+    max-width: none;
+    height: 100vh;
+    padding: max(14px, env(safe-area-inset-top)) 16px calc(12px + env(safe-area-inset-bottom));
+    box-shadow: none;
+    gap: 12px;
+  }
+  .drawer__head { padding-bottom: 10px; }
+  .drawer__title { font-size: 18px; }
+  .drawer__x { font-size: 22px; padding: 8px 12px; min-width: 44px; min-height: 44px; }
+  .drawer__prompt { font-size: 13px; max-height: 30vh; }
+  .drawer__log { font-size: 12.5px; }
+}
 </style>

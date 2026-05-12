@@ -583,4 +583,39 @@ async function onDelete(t: WSTask) {
 }
 .proj-dialog__btn--primary:disabled { opacity: 0.4; cursor: not-allowed; }
 .proj-dialog__btn--ghost { color: var(--atlas-text-secondary); }
+
+/* ---- Phone: <600px. Match atlas design: safe-area insets, 44pt tap
+   targets, 16px gutters, bottom-sheet dialogs, no hover affordances. ---- */
+.ws-page {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+@media (max-width: 600px) {
+  .ws-page__head {
+    flex-wrap: wrap;
+    padding: max(16px, env(safe-area-inset-top)) 16px 14px;
+    gap: 10px;
+  }
+  .ws-page__title-block { flex: 1 1 100%; order: 1; }
+  .ws-page__back { order: 0; min-height: 36px; padding: 8px 14px; font-size: 14px; }
+  .ws-page__head-actions { order: 3; flex: 1 1 100%; flex-wrap: wrap; }
+  .ws-page__action { min-height: 44px; padding: 10px 14px; font-size: 14px; flex: 1 1 calc(50% - 5px); }
+  .ws-page__add { order: 2; flex: 1 1 100%; padding: 12px 16px; font-size: 15px; min-height: 44px; }
+  .ws-page__title { font-size: 22px; }
+
+  .ws-page__body {
+    padding: 14px 16px calc(24px + env(safe-area-inset-bottom));
+    gap: 12px;
+  }
+
+  .ws-projects__chip { padding: 10px 10px 10px 14px; min-height: 38px; font-size: 14px; }
+  .ws-projects__memory { padding: 6px 10px; font-size: 14px; opacity: 0.85; }
+
+  .proj-dialog-bg { padding: 12px; align-items: flex-end; }
+  .proj-dialog { padding: 18px; border-radius: 14px 14px 0 0; }
+  .proj-dialog__field input { font-size: 16px; padding: 12px; min-height: 44px; }
+  .proj-dialog__foot { flex-wrap: wrap; }
+  .proj-dialog__btn { flex: 1 1 45%; padding: 12px 16px; min-height: 44px; font-size: 14px; }
+  .proj-dialog__x { font-size: 22px; padding: 8px 12px; }
+}
 </style>
