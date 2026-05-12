@@ -8,7 +8,7 @@
   >
     <div class="tile__head">
       <span class="tile__eyebrow">{{ label }}</span>
-      <span v-if="trend" class="tile__trend" :class="`tile__trend--${trend}`">{{ trendLabel }}</span>
+      <span v-if="trend" class="tile__trend" :class="`tile__trend--${trend}`">{{ trendLabel[trend] }}</span>
       <span v-else-if="dot" class="tile__dot" :class="`tile__dot--${dot}`"></span>
     </div>
     <div class="tile__value">{{ value }}</div>

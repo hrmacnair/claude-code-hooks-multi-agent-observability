@@ -9,7 +9,7 @@
       <label class="field">
         <span class="field__label">Project</span>
         <select v-model="projectId" class="field__input">
-          <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.name }} <span>· {{ p.path }}</span></option>
+          <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.name }} · {{ p.path }}</option>
         </select>
       </label>
 
