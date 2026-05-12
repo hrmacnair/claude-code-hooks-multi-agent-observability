@@ -79,6 +79,9 @@
         <!-- Work card (tabs: Missions / Projects / Agents / Scout / Routing / GitHub) -->
         <WorkCard :events="events" @open-division="(slug) => divisionDrawer = slug" />
 
+        <!-- Layer 5 proposals queue (Phase 11 surface). -->
+        <ProposalsCard />
+
         <!-- Activity strip (collapsed) -->
         <LiveActivityCard :events="events" @view-all="liveAllOpen = true" @open-search="auditOpen = true" />
       </section>
@@ -135,6 +138,7 @@ import LiveActivityCard from './components/dashboard/cards/LiveActivityCard.vue'
 import TodaysBriefCard from './components/dashboard/cards/TodaysBriefCard.vue';
 import TodayCard from './components/dashboard/cards/TodayCard.vue';
 import WorkCard from './components/dashboard/cards/WorkCard.vue';
+import ProposalsCard from './components/dashboard/cards/ProposalsCard.vue';
 import SpendDetailModal from './components/dashboard/SpendDetailModal.vue';
 import DivisionDrawer from './components/dashboard/DivisionDrawer.vue';
 import AuditSearchModal from './components/dashboard/AuditSearchModal.vue';

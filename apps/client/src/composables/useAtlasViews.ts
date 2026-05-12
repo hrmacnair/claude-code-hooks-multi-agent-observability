@@ -1,5 +1,5 @@
 // Client-side composables for the new dashboard views.
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { API_BASE_URL } from '../config';
 
 function makePoller<T>(url: string, intervalMs: number, initial: T) {
@@ -31,6 +31,70 @@ function makePoller<T>(url: string, intervalMs: number, initial: T) {
   }
 
   return { data, loading, refresh, start, stop };
+}
+
+// ---- Proposals (Layer 5 self-improvement queue) ----
+export type ProposalRow = {
+  id: string;
+  source_path: string;
+  created: string;
+  proposer_division: string;
+  proposer_agent: string;
+  type: string;
+  target_file: string;
+  rationale_preview: string;
+  diff_preview: string;
+  human_only: boolean;
+  applyable_in_layer_5a: boolean;
+  velocity_state: 'in_window' | 'queued_over_cap';
+  status: 'pending' | 'queued' | 'applied' | 'rejected' | 'deferred';
+};
+export function useAtlasProposals() {
+  // Endpoint returns { items: ProposalRow[] }; expose the unwrapped array.
+  const { data, loading, refresh, start, stop } = makePoller<{ items: ProposalRow[] }>(
+    '/api/atlas/proposals', 30_000, { items: [] });
+  onMounted(start); onUnmounted(stop);
+  const proposals = computed(() => data.value?.items || []);
+  return { proposals, loading, refresh };
+}
+
+export async function actOnProposal(
+  id: string,
+  action: 'approve' | 'reject' | 'defer' | 'rollback',
+  opts?: { note?: string },
+): Promise<{ ok: boolean; message: string }> {
+  try {
+    const r = await fetch(`${API_BASE_URL}/api/atlas/proposals/${encodeURIComponent(id)}/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ surface: 'dashboard', approver: 'operator', note: opts?.note || '' }),
+    });
+    return await r.json();
+  } catch (err: any) {
+    return { ok: false, message: `request failed: ${err.message}` };
+  }
+}
+
+export async function fetchProposalYaml(id: string): Promise<string | null> {
+  try {
+    const r = await fetch(`${API_BASE_URL}/api/atlas/proposals/${encodeURIComponent(id)}?format=yaml`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d.yaml || null;
+  } catch { return null; }
+}
+
+export async function editProposalYaml(id: string, yamlText: string): Promise<{ ok: boolean; message: string }> {
+  try {
+    const r = await fetch(`${API_BASE_URL}/api/atlas/proposals/${encodeURIComponent(id)}/edit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ surface: 'dashboard', approver: 'operator', yaml: yamlText }),
+    });
+    return await r.json();
+  } catch (err: any) {
+    return { ok: false, message: `request failed: ${err.message}` };
+  }
 }
 
 // ---- Missions ----
