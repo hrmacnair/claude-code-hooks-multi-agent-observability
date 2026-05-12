@@ -15,7 +15,7 @@
 // Mode: 'safe' (acceptEdits) | 'auto' (bypassPermissions)
 
 import { Database } from 'bun:sqlite';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'fs';
 import { randomUUID } from 'crypto';
 
@@ -23,11 +23,103 @@ const DB_PATH = 'events.db';
 const WORKSPACE_HOME = '/Users/hrmacnair/atlas/workspace';
 const RUNS_DIR = `${WORKSPACE_HOME}/runs`;
 const PROJECTS_DIR = `${WORKSPACE_HOME}/projects`;
+const WORKTREES_DIR = `${WORKSPACE_HOME}/worktrees`;
 const CLAUDE_BIN = '/Users/hrmacnair/.local/bin/claude';
 const CODEX_BIN  = '/Users/hrmacnair/.npm-global/bin/codex';
+const GIT_BIN    = '/usr/bin/git';
 
 if (!existsSync(RUNS_DIR)) mkdirSync(RUNS_DIR, { recursive: true });
 if (!existsSync(PROJECTS_DIR)) mkdirSync(PROJECTS_DIR, { recursive: true });
+if (!existsSync(WORKTREES_DIR)) mkdirSync(WORKTREES_DIR, { recursive: true });
+
+// ---- Git worktree helpers ----
+
+function isGitRepo(path: string): boolean {
+  if (!existsSync(path)) return false;
+  const r = spawnSync(GIT_BIN, ['rev-parse', '--is-inside-work-tree'], { cwd: path, encoding: 'utf8' });
+  return r.status === 0 && r.stdout.trim() === 'true';
+}
+
+function gitHeadRef(path: string): string | null {
+  const r = spawnSync(GIT_BIN, ['rev-parse', 'HEAD'], { cwd: path, encoding: 'utf8' });
+  return r.status === 0 ? r.stdout.trim() : null;
+}
+
+function shortId(id: string): string { return id.replace(/-/g, '').slice(0, 8); }
+
+interface WorktreeResult { ok: boolean; path?: string; branch?: string; base_ref?: string; error?: string }
+
+function createWorktree(projectId: string, projectPath: string, taskId: string): WorktreeResult {
+  if (!isGitRepo(projectPath)) return { ok: false, error: 'not a git repo' };
+  const sid = shortId(taskId);
+  const branch = `workspace/${sid}`;
+  const dir = `${WORKTREES_DIR}/${projectId}/${sid}`;
+  // Clean up any leftover (shouldn't happen with unique IDs)
+  if (existsSync(dir)) {
+    spawnSync(GIT_BIN, ['worktree', 'remove', dir, '--force'], { cwd: projectPath });
+  }
+  if (!existsSync(`${WORKTREES_DIR}/${projectId}`)) mkdirSync(`${WORKTREES_DIR}/${projectId}`, { recursive: true });
+  const base = gitHeadRef(projectPath);
+  const r = spawnSync(GIT_BIN, ['worktree', 'add', '-b', branch, dir, 'HEAD'], { cwd: projectPath, encoding: 'utf8' });
+  if (r.status !== 0) return { ok: false, error: `worktree add failed: ${(r.stderr || r.stdout || '').slice(0, 300)}` };
+  return { ok: true, path: dir, branch, base_ref: base || undefined };
+}
+
+function removeWorktree(projectPath: string, worktreePath: string, branch: string | null): { ok: boolean; error?: string } {
+  if (!existsSync(worktreePath)) return { ok: true };
+  const r1 = spawnSync(GIT_BIN, ['worktree', 'remove', worktreePath, '--force'], { cwd: projectPath, encoding: 'utf8' });
+  if (r1.status !== 0) return { ok: false, error: r1.stderr || 'worktree remove failed' };
+  if (branch) {
+    spawnSync(GIT_BIN, ['branch', '-D', branch], { cwd: projectPath });
+  }
+  return { ok: true };
+}
+
+export function getTaskDiff(id: string): { ok: boolean; diff?: string; error?: string } {
+  const t = getTask(id);
+  if (!t) return { ok: false, error: 'task not found' };
+  if (!t.worktree_path || !existsSync(t.worktree_path)) return { ok: true, diff: '' };
+  // Diff worktree HEAD against the base commit (where the branch forked from main).
+  // Using "..." three-dot would need the merge-base; simpler: diff against parent project's current HEAD.
+  if (!t.project_path) return { ok: false, error: 'project path missing' };
+  // merge-base of worktree branch vs current project HEAD
+  const mb = spawnSync(GIT_BIN, ['merge-base', 'HEAD', t.branch || 'HEAD'], { cwd: t.project_path, encoding: 'utf8' });
+  const base = mb.status === 0 ? mb.stdout.trim() : 'HEAD';
+  const r = spawnSync(GIT_BIN, ['diff', '--stat', '--patch', `${base}...${t.branch}`], {
+    cwd: t.project_path,
+    encoding: 'utf8',
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  if (r.status !== 0 && !r.stdout) return { ok: false, error: r.stderr || 'diff failed' };
+  return { ok: true, diff: r.stdout };
+}
+
+export function mergeTask(id: string): { ok: boolean; error?: string } {
+  const t = getTask(id);
+  if (!t) return { ok: false, error: 'task not found' };
+  if (!t.branch || !t.project_path) return { ok: false, error: 'no branch / project path' };
+  if (t.status === 'running') return { ok: false, error: 'task still running' };
+  // FF-only merge into whatever the project_path is currently on
+  const r = spawnSync(GIT_BIN, ['merge', '--ff-only', t.branch], { cwd: t.project_path, encoding: 'utf8' });
+  if (r.status !== 0) return { ok: false, error: `merge failed (likely non-FF — main has diverged): ${(r.stderr || r.stdout || '').slice(0, 300)}` };
+  // On successful merge, clean up the worktree + branch
+  if (t.worktree_path) removeWorktree(t.project_path, t.worktree_path, t.branch);
+  const d = getDB();
+  d.prepare(`UPDATE workspace_tasks SET worktree_path = NULL, branch = NULL, status = 'done' WHERE id = ?`).run(id);
+  return { ok: true };
+}
+
+export function discardTaskWorktree(id: string): { ok: boolean; error?: string } {
+  const t = getTask(id);
+  if (!t) return { ok: false, error: 'task not found' };
+  if (t.status === 'running') return { ok: false, error: 'task still running' };
+  if (!t.project_path || !t.worktree_path) return { ok: true };
+  const r = removeWorktree(t.project_path, t.worktree_path, t.branch);
+  if (!r.ok) return r;
+  const d = getDB();
+  d.prepare(`UPDATE workspace_tasks SET worktree_path = NULL, branch = NULL WHERE id = ?`).run(id);
+  return { ok: true };
+}
 
 let db: Database | null = null;
 function getDB(): Database {
@@ -75,12 +167,17 @@ export function initWorkspaceTables(): void {
       parent_task_id TEXT
     )
   `);
-  // Migration: add cost + session columns if missing (must run before indexes
-  // that reference the new columns, since CREATE TABLE IF NOT EXISTS is a no-op
-  // when the table already exists from an older schema).
+  // Migration: add cost + session + worktree columns if missing (must run
+  // before indexes that reference the new columns, since CREATE TABLE IF NOT
+  // EXISTS is a no-op when the table already exists from an older schema).
   const cols = d.prepare(`PRAGMA table_info(workspace_tasks)`).all() as any[];
   const have = new Set(cols.map(c => c.name));
-  for (const col of ['cost_usd REAL', 'input_tokens INTEGER', 'output_tokens INTEGER', 'cache_read_tokens INTEGER', 'cache_create_tokens INTEGER', 'session_id TEXT', 'parent_task_id TEXT']) {
+  for (const col of [
+    'cost_usd REAL', 'input_tokens INTEGER', 'output_tokens INTEGER',
+    'cache_read_tokens INTEGER', 'cache_create_tokens INTEGER',
+    'session_id TEXT', 'parent_task_id TEXT',
+    'worktree_path TEXT', 'branch TEXT',
+  ]) {
     const name = col.split(' ')[0];
     if (!have.has(name)) d.exec(`ALTER TABLE workspace_tasks ADD COLUMN ${col}`);
   }
@@ -446,6 +543,8 @@ export interface WorkspaceTask {
   cache_create_tokens: number | null;
   session_id: string | null;
   parent_task_id: string | null;
+  worktree_path: string | null;
+  branch: string | null;
   project_name?: string;
   project_path?: string;
 }
@@ -634,11 +733,39 @@ export function spawnTask(id: string): { ok: boolean; pid?: number; error?: stri
 }
 
 function spawnTaskNow(id: string): { ok: boolean; pid?: number; error?: string } {
-  const task = getTask(id);
+  let task = getTask(id);
   if (!task) return { ok: false, error: 'task not found' };
   if (task.status === 'running') return { ok: false, error: 'already running' };
   if (!task.project_path) return { ok: false, error: 'project path missing' };
   if (!existsSync(task.project_path)) return { ok: false, error: `cwd missing: ${task.project_path}` };
+
+  // Phase 6: ensure a worktree (only for git projects).
+  // Follow-ups reuse the parent's worktree so the agent stays in the same branch.
+  let cwd = task.project_path;
+  if (!task.worktree_path) {
+    let wt: WorktreeResult | null = null;
+    if (task.parent_task_id) {
+      const parent = getTask(task.parent_task_id);
+      if (parent?.worktree_path && existsSync(parent.worktree_path)) {
+        wt = { ok: true, path: parent.worktree_path, branch: parent.branch || undefined };
+      }
+    }
+    if (!wt || !wt.ok) {
+      wt = createWorktree(task.project_id, task.project_path, task.id);
+    }
+    if (wt.ok && wt.path) {
+      const d = getDB();
+      d.prepare(`UPDATE workspace_tasks SET worktree_path = ?, branch = ? WHERE id = ?`)
+        .run(wt.path, wt.branch || null, id);
+      cwd = wt.path;
+      task = getTask(id)!;
+    } else {
+      // Non-git project or worktree failure: fall back to spawning in project_path
+      // (legacy behavior — no diff/merge buttons for this task).
+    }
+  } else {
+    cwd = task.worktree_path;
+  }
 
   const cfg = MODEL_BACKEND[task.model] || MODEL_BACKEND.sonnet;
   const logPath = task.log_path || `${RUNS_DIR}/${id}.log`;
@@ -700,7 +827,8 @@ function spawnTaskNow(id: string): { ok: boolean; pid?: number; error?: string }
   writer.write(
     `# task ${id}\n` +
     `# project: ${task.project_name}\n` +
-    `# cwd: ${task.project_path}\n` +
+    `# cwd: ${cwd}\n` +
+    (task.branch ? `# branch: ${task.branch}\n` : '') +
     `# model: ${task.model} (${cfg.backend})\n` +
     `# mode: ${task.mode}\n` +
     `# started: ${new Date().toISOString()}\n` +
@@ -709,7 +837,7 @@ function spawnTaskNow(id: string): { ok: boolean; pid?: number; error?: string }
   );
 
   const child = spawn(cmd, args, {
-    cwd: task.project_path,
+    cwd,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false,
@@ -826,6 +954,25 @@ function spawnTaskNow(id: string): { ok: boolean; pid?: number; error?: string }
         const jsonlText = await Bun.file(jsonlPath).text();
         sessionId = parseStreamJsonSession(jsonlText);
       } catch {}
+    }
+
+    // Auto-commit any changes the agent made inside the worktree. This makes
+    // the diff/merge flow meaningful — without a commit, `git diff` against
+    // the base ref hides untracked files and the FF merge would fail.
+    if (exitCode === 0 && cwd && task.branch && cwd !== task.project_path) {
+      try {
+        const dirty = spawnSync(GIT_BIN, ['status', '--porcelain'], { cwd, encoding: 'utf8' });
+        if (dirty.status === 0 && dirty.stdout.trim()) {
+          spawnSync(GIT_BIN, ['add', '-A'], { cwd });
+          const msg = `workspace: ${task.title}`.slice(0, 200);
+          // Author identity may not be set; pass on the CLI to avoid prompts.
+          spawnSync(GIT_BIN, [
+            '-c', 'user.email=atlas-workspace@local',
+            '-c', 'user.name=Atlas Workspace',
+            'commit', '-m', msg, '--no-verify',
+          ], { cwd });
+        }
+      } catch {/* non-fatal */}
     }
 
     if (cost) {

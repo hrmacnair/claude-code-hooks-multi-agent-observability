@@ -15,6 +15,7 @@
         @expand="(t) => $emit('expand', t)"
         @unpin="(t) => $emit('unpin', t)"
         @follow-up="(t, p) => $emit('follow-up', t, p)"
+        @diff="(t) => $emit('diff', t)"
       />
     </div>
   </section>
@@ -32,7 +33,7 @@ const props = defineProps<{
   liveLogs: Record<string, string>;
 }>();
 defineEmits<{
-  (e: 'kill' | 'rerun' | 'expand' | 'unpin', t: WSTask): void;
+  (e: 'kill' | 'rerun' | 'expand' | 'unpin' | 'diff', t: WSTask): void;
   (e: 'follow-up', t: WSTask, prompt: string): void;
   (e: 'unpin-all'): void;
 }>();

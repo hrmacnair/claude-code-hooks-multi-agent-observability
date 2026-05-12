@@ -78,6 +78,9 @@ import {
   archiveTask as archiveWorkspaceTask,
   archiveDoneTasks as archiveDoneWorkspaceTasks,
   autoArchiveSweep as autoArchiveWorkspaceSweep,
+  getTaskDiff as getWorkspaceTaskDiff,
+  mergeTask as mergeWorkspaceTask,
+  discardTaskWorktree as discardWorkspaceTaskWorktree,
 } from './atlas-workspace';
 
 // Initialize database
@@ -1673,6 +1676,32 @@ const server = Bun.serve({
     }
     if (wsTplMod && req.method === 'DELETE') {
       const r = deleteWorkspaceTemplate(wsTplMod[1]);
+      return new Response(JSON.stringify(r), {
+        status: r.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // Phase 6: worktree diff / merge / discard
+    const wsTaskDiff = url.pathname.match(/^\/api\/atlas\/workspace\/tasks\/([^\/]+)\/diff$/);
+    if (wsTaskDiff && req.method === 'GET') {
+      const r = getWorkspaceTaskDiff(wsTaskDiff[1]);
+      return new Response(JSON.stringify(r), {
+        status: r.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    const wsTaskMerge = url.pathname.match(/^\/api\/atlas\/workspace\/tasks\/([^\/]+)\/merge$/);
+    if (wsTaskMerge && req.method === 'POST') {
+      const r = mergeWorkspaceTask(wsTaskMerge[1]);
+      return new Response(JSON.stringify(r), {
+        status: r.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    const wsTaskDiscard = url.pathname.match(/^\/api\/atlas\/workspace\/tasks\/([^\/]+)\/discard$/);
+    if (wsTaskDiscard && req.method === 'POST') {
+      const r = discardWorkspaceTaskWorktree(wsTaskDiscard[1]);
       return new Response(JSON.stringify(r), {
         status: r.ok ? 200 : 400,
         headers: { ...headers, 'Content-Type': 'application/json' }

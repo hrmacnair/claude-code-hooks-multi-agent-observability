@@ -10,6 +10,7 @@
         </span>
       </div>
       <div class="pane__actions">
+        <button v-if="canDiff" class="pane__btn pane__btn--diff" @click="$emit('diff', task)" title="View diff / merge / discard">🔍 Diff</button>
         <button v-if="task.status === 'running'" class="pane__btn pane__btn--danger" @click="$emit('kill', task)" title="Kill">■</button>
         <button v-if="task.status === 'backlog' || task.status === 'failed' || task.status === 'review' || task.status === 'done'"
                 class="pane__btn" @click="$emit('rerun', task)" title="Re-run from scratch">↻</button>
@@ -58,9 +59,11 @@ import { API_BASE_URL } from '../../config';
 
 const props = defineProps<{ task: WSTask; liveLog: string }>();
 const emit = defineEmits<{
-  (e: 'kill' | 'rerun' | 'expand' | 'unpin', t: WSTask): void;
+  (e: 'kill' | 'rerun' | 'expand' | 'unpin' | 'diff', t: WSTask): void;
   (e: 'follow-up', t: WSTask, prompt: string): void;
 }>();
+
+const canDiff = computed(() => !!props.task.worktree_path && !!props.task.branch);
 
 const followUpText = ref('');
 const sending = ref(false);
@@ -290,6 +293,7 @@ onBeforeUnmount(() => {
 }
 .pane__btn:hover { background: rgba(255,255,255,0.12); }
 .pane__btn--danger { color: #ff6961; }
+.pane__btn--diff { color: #5e9eff; width: auto; padding: 0 8px; font-size: 10.5px; font-weight: 600; }
 
 .pane__body {
   flex: 1;

@@ -63,6 +63,7 @@
         @unpin="onTogglePin"
         @unpin-all="unpinAllRemote()"
         @follow-up="onFollowUp"
+        @diff="onOpenDiff"
       />
 
       <BroadcastDock
@@ -96,6 +97,17 @@
       :update="updateTemplate"
       :remove="deleteTemplate"
       @close="templatesOpen = false"
+    />
+
+    <DiffModal
+      v-if="diffFor"
+      :task="diffFor"
+      :fetch-diff="fetchTaskDiff"
+      :merge="mergeTask"
+      :discard="discardTaskWorktree"
+      @close="diffFor = null"
+      @merged="(t) => { diffFor = null; }"
+      @discarded="(t) => { diffFor = null; }"
     />
 
     <TaskDetailDrawer
@@ -140,6 +152,7 @@ import PaneGrid from '../components/workspace/PaneGrid.vue';
 import BroadcastDock from '../components/workspace/BroadcastDock.vue';
 import ProjectMemoryDialog from '../components/workspace/ProjectMemoryDialog.vue';
 import TemplatesDialog from '../components/workspace/TemplatesDialog.vue';
+import DiffModal from '../components/workspace/DiffModal.vue';
 
 defineEmits<{ (e: 'close'): void }>();
 
@@ -151,9 +164,12 @@ const {
   followUpTask,
   createTemplate, updateTemplate, deleteTemplate,
   archiveDone,
+  fetchTaskDiff, mergeTask, discardTaskWorktree,
 } = useWorkspace();
 
 const templatesOpen = ref(false);
+const diffFor = ref<WSTask | null>(null);
+function onOpenDiff(t: WSTask) { diffFor.value = t; }
 
 async function onArchiveDone() {
   if (!activeProject.value) return;

@@ -32,6 +32,10 @@ export interface WSTask {
   output_tokens: number | null;
   cache_read_tokens: number | null;
   cache_create_tokens: number | null;
+  session_id?: string | null;
+  parent_task_id?: string | null;
+  worktree_path?: string | null;
+  branch?: string | null;
 }
 export interface VibeTemplate {
   id: string;
@@ -169,6 +173,22 @@ export function useWorkspace() {
     if (!r.ok) throw new Error(r.error || 'delete template failed');
     templates.value = templates.value.filter(t => t.id !== id);
   }
+  async function fetchTaskDiff(id: string): Promise<{ ok: boolean; diff: string; error?: string }> {
+    const r = await fetch(`${API_BASE_URL}/api/atlas/workspace/tasks/${id}/diff`).then(r => r.json());
+    return { ok: r.ok, diff: r.diff || '', error: r.error };
+  }
+  async function mergeTask(id: string): Promise<void> {
+    const r = await fetch(`${API_BASE_URL}/api/atlas/workspace/tasks/${id}/merge`, { method: 'POST' }).then(r => r.json());
+    if (!r.ok) throw new Error(r.error || 'merge failed');
+    await refresh();
+  }
+  async function discardTaskWorktree(id: string): Promise<void> {
+    const r = await fetch(`${API_BASE_URL}/api/atlas/workspace/tasks/${id}/discard`, { method: 'POST' }).then(r => r.json());
+    if (!r.ok) throw new Error(r.error || 'discard failed');
+    const t = tasks.value.find(x => x.id === id);
+    if (t) { t.worktree_path = null; t.branch = null; tasks.value = [...tasks.value]; }
+  }
+
   async function archiveTask(id: string): Promise<void> {
     await fetch(`${API_BASE_URL}/api/atlas/workspace/tasks/${id}/archive`, { method: 'POST' });
     tasks.value = tasks.value.filter(t => t.id !== id);
@@ -252,5 +272,6 @@ export function useWorkspace() {
     followUpTask,
     createTemplate, updateTemplate, deleteTemplate,
     archiveTask, archiveDone,
+    fetchTaskDiff, mergeTask, discardTaskWorktree,
   };
 }
