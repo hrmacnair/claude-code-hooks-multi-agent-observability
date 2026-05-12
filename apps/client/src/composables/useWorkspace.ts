@@ -9,6 +9,7 @@ export interface WSProject {
   path: string;
   created_at: number;
   task_counts: { backlog: number; running: number; review: number; done: number };
+  spend?: { cost_usd: number; tasks: number };
 }
 export interface WSTask {
   id: string;
@@ -26,11 +27,25 @@ export interface WSTask {
   started_at: number | null;
   finished_at: number | null;
   log_path: string | null;
+  cost_usd: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_tokens: number | null;
+  cache_create_tokens: number | null;
+}
+export interface VibeTemplate {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  body: string;
 }
 
 export function useWorkspace() {
   const projects = ref<WSProject[]>([]);
   const tasks = ref<WSTask[]>([]);
+  const pinnedIds = ref<string[]>([]);
+  const templates = ref<VibeTemplate[]>([]);
   const error = ref<string | null>(null);
   const loading = ref(false);
   // Live log buffers per task: taskId → string (rolling tail)
@@ -39,18 +54,51 @@ export function useWorkspace() {
   async function refresh() {
     loading.value = true;
     try {
-      const [pr, tr] = await Promise.all([
+      const [pr, tr, pn, tp] = await Promise.all([
         fetch(`${API_BASE_URL}/api/atlas/workspace/projects`).then(r => r.json()),
         fetch(`${API_BASE_URL}/api/atlas/workspace/tasks`).then(r => r.json()),
+        fetch(`${API_BASE_URL}/api/atlas/workspace/pins`).then(r => r.json()),
+        fetch(`${API_BASE_URL}/api/atlas/workspace/templates`).then(r => r.json()),
       ]);
       projects.value = pr.projects || [];
       tasks.value = tr.tasks || [];
+      pinnedIds.value = pn.pinnedIds || [];
+      templates.value = tp.templates || [];
       error.value = null;
     } catch (e: any) {
       error.value = e.message;
     } finally {
       loading.value = false;
     }
+  }
+
+  async function pinTaskRemote(id: string): Promise<void> {
+    const r = await fetch(`${API_BASE_URL}/api/atlas/workspace/pins`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_id: id }),
+    }).then(r => r.json());
+    if (!r.ok) throw new Error(r.error || 'pin failed');
+    if (!pinnedIds.value.includes(id)) pinnedIds.value = [...pinnedIds.value, id];
+  }
+  async function unpinTaskRemote(id: string): Promise<void> {
+    await fetch(`${API_BASE_URL}/api/atlas/workspace/pins/${id}`, { method: 'DELETE' });
+    pinnedIds.value = pinnedIds.value.filter(x => x !== id);
+  }
+  async function unpinAllRemote(): Promise<void> {
+    await fetch(`${API_BASE_URL}/api/atlas/workspace/pins`, { method: 'DELETE' });
+    pinnedIds.value = [];
+  }
+
+  async function getProjectMemory(projectId: string): Promise<string> {
+    const r = await fetch(`${API_BASE_URL}/api/atlas/workspace/projects/${projectId}/memory`).then(r => r.json());
+    return r.body || '';
+  }
+  async function setProjectMemory(projectId: string, body: string): Promise<void> {
+    const r = await fetch(`${API_BASE_URL}/api/atlas/workspace/projects/${projectId}/memory`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body }),
+    }).then(r => r.json());
+    if (!r.ok) throw new Error(r.error || 'save failed');
   }
 
   async function createProject(name: string, path: string) {
@@ -145,7 +193,9 @@ export function useWorkspace() {
   });
 
   return {
-    projects, tasks, tasksByProject, liveLogs, error, loading,
+    projects, tasks, pinnedIds, templates, tasksByProject, liveLogs, error, loading,
     refresh, createProject, deleteProject, createTask, taskAction, fetchTaskLog,
+    pinTaskRemote, unpinTaskRemote, unpinAllRemote,
+    getProjectMemory, setProjectMemory,
   };
 }

@@ -20,12 +20,15 @@
         </div>
       </div>
 
-      <textarea
-        v-model="prompt"
-        class="dock__textarea"
-        rows="3"
-        placeholder="Send the same prompt to every selected pinned task. Creates a fresh task per target with the same model + mode, then spawns it."
-      ></textarea>
+      <div class="dock__prompt-wrap">
+        <textarea
+          v-model="prompt"
+          class="dock__textarea"
+          rows="3"
+          placeholder="Send the same prompt to every selected pinned task. Creates a fresh task per target with the same model + mode, then spawns it."
+        ></textarea>
+        <VoiceMic v-model="prompt" class="dock__mic" />
+      </div>
 
       <footer class="dock__foot">
         <label class="dock__mode">
@@ -44,6 +47,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import type { WSTask } from '../../composables/useWorkspace';
+import VoiceMic from './VoiceMic.vue';
 
 const props = defineProps<{ candidates: WSTask[] }>();
 const emit = defineEmits<{
@@ -176,6 +180,7 @@ function onSend() {
 .dock__chip-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
 .dock__empty { font-size: 12px; color: var(--atlas-text-secondary); opacity: 0.7; padding: 4px; }
 
+.dock__prompt-wrap { position: relative; }
 .dock__textarea {
   background: var(--atlas-page-bg);
   border: 1px solid var(--atlas-hairline);
@@ -187,8 +192,11 @@ function onSend() {
   color: var(--atlas-text-primary);
   outline: none;
   resize: vertical;
+  width: 100%;
+  box-sizing: border-box;
 }
 .dock__textarea:focus { border-color: var(--atlas-blue); }
+.dock__mic { position: absolute; right: 8px; top: 8px; }
 
 .dock__foot {
   display: flex;

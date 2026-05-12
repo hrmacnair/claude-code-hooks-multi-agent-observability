@@ -12,7 +12,7 @@
     <main class="ws-page__body">
       <!-- Project selector strip -->
       <section class="ws-projects">
-        <button
+        <div
           v-for="p in projects"
           :key="p.id"
           class="ws-projects__chip"
@@ -20,11 +20,15 @@
           @click="activeProject = p.id"
           :title="p.path"
         >
-          {{ p.name }}
+          <span class="ws-projects__name">{{ p.name }}</span>
           <span class="ws-projects__count" v-if="p.task_counts">
             {{ p.task_counts.running + p.task_counts.backlog }}
           </span>
-        </button>
+          <span v-if="(p.spend?.cost_usd ?? 0) > 0" class="ws-projects__spend" :title="`${p.spend?.tasks} task(s) costed`">
+            ${{ (p.spend?.cost_usd ?? 0).toFixed(2) }}
+          </span>
+          <button class="ws-projects__memory" @click.stop="onEditMemory(p)" title="Edit project memory (CLAUDE.md)">📝</button>
+        </div>
         <button class="ws-projects__chip ws-projects__chip--new" @click="addProjectOpen = true">+ Project</button>
       </section>
 
@@ -53,7 +57,7 @@
         @rerun="onRerun"
         @expand="(t) => openTask = t"
         @unpin="onTogglePin"
-        @unpin-all="pinnedIds = []"
+        @unpin-all="unpinAllRemote()"
       />
 
       <BroadcastDock
@@ -67,8 +71,17 @@
       v-if="newTaskOpen"
       :projects="projects"
       :default-project-id="activeProject"
+      :templates="templates"
       @close="newTaskOpen = false"
       @create="onCreateTask"
+    />
+
+    <ProjectMemoryDialog
+      v-if="memoryFor"
+      :project="memoryFor"
+      :load="() => getProjectMemory(memoryFor!.id)"
+      :save="(b: string) => setProjectMemory(memoryFor!.id, b)"
+      @close="memoryFor = null"
     />
 
     <TaskDetailDrawer
@@ -105,41 +118,46 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
-import { useWorkspace, type WSTask } from '../composables/useWorkspace';
+import { useWorkspace, type WSTask, type WSProject } from '../composables/useWorkspace';
 import Kanban from '../components/workspace/Kanban.vue';
 import NewTaskDialog from '../components/workspace/NewTaskDialog.vue';
 import TaskDetailDrawer from '../components/workspace/TaskDetailDrawer.vue';
 import PaneGrid from '../components/workspace/PaneGrid.vue';
 import BroadcastDock from '../components/workspace/BroadcastDock.vue';
+import ProjectMemoryDialog from '../components/workspace/ProjectMemoryDialog.vue';
 
 defineEmits<{ (e: 'close'): void }>();
 
 const {
-  projects, tasks, liveLogs,
+  projects, tasks, pinnedIds, templates, liveLogs,
   createProject, createTask, taskAction,
+  pinTaskRemote, unpinTaskRemote, unpinAllRemote,
+  getProjectMemory, setProjectMemory,
 } = useWorkspace();
 
-// ---- Pin state (client-only; reload-resets — fine for Phase 2) ----
+// ---- Pin state (server-persisted) ----
 const MAX_PINS = 8;
-const pinnedIds = ref<string[]>([]);
 const pinnedTasks = computed(() =>
   pinnedIds.value
     .map(id => tasks.value.find(t => t.id === id))
     .filter((t): t is WSTask => !!t)
 );
 
-function onTogglePin(t: WSTask) {
-  const i = pinnedIds.value.indexOf(t.id);
-  if (i >= 0) {
-    pinnedIds.value = pinnedIds.value.filter(id => id !== t.id);
+async function onTogglePin(t: WSTask) {
+  if (pinnedIds.value.includes(t.id)) {
+    try { await unpinTaskRemote(t.id); } catch (e: any) { alert(e.message); }
   } else {
     if (pinnedIds.value.length >= MAX_PINS) {
       alert(`Max ${MAX_PINS} pinned panes. Unpin one first.`);
       return;
     }
-    pinnedIds.value = [...pinnedIds.value, t.id];
+    try { await pinTaskRemote(t.id); } catch (e: any) { alert(e.message); }
   }
 }
+
+// ---- Project memory editor ----
+const memoryFor = ref<WSProject | null>(null);
+function onEditMemory(p: WSProject) { memoryFor.value = p; }
 
 async function onRerun(t: WSTask) {
   // Create new task with same prompt + spawn
@@ -355,7 +373,7 @@ async function onDelete(t: WSTask) {
   font-family: inherit;
   font-size: 13px;
   color: var(--atlas-text-primary);
-  padding: 6px 12px;
+  padding: 6px 8px 6px 12px;
   border-radius: 8px;
   cursor: pointer;
   display: inline-flex;
@@ -369,6 +387,7 @@ async function onDelete(t: WSTask) {
   color: var(--atlas-text-strong);
   font-weight: 600;
 }
+.ws-projects__name { line-height: 1; }
 .ws-projects__count {
   font-family: ui-monospace, Menlo, monospace;
   font-size: 11px;
@@ -377,10 +396,33 @@ async function onDelete(t: WSTask) {
   padding: 1px 6px;
   border-radius: 4px;
 }
-.ws-projects__chip--new {
-  border: 1px dashed var(--atlas-hairline);
-  background: transparent;
+.ws-projects__spend {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
   color: var(--atlas-text-secondary);
+  opacity: 0.8;
+}
+.ws-projects__memory {
+  background: transparent;
+  border: none;
+  color: var(--atlas-text-secondary);
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 100ms ease, background-color 100ms ease;
+}
+.ws-projects__memory:hover { opacity: 1; background: rgba(127,127,127,0.12); }
+.ws-projects__chip--new {
+  background: transparent;
+  border: 1px dashed var(--atlas-hairline);
+  color: var(--atlas-text-secondary);
+  padding: 6px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 8px;
 }
 
 .ws-empty {

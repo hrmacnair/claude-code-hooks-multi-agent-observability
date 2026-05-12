@@ -16,15 +16,18 @@
 
 import { Database } from 'bun:sqlite';
 import { spawn } from 'child_process';
-import { existsSync, mkdirSync, statSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'fs';
 import { randomUUID } from 'crypto';
 
 const DB_PATH = 'events.db';
-const RUNS_DIR = '/Users/hrmacnair/atlas/workspace/runs';
+const WORKSPACE_HOME = '/Users/hrmacnair/atlas/workspace';
+const RUNS_DIR = `${WORKSPACE_HOME}/runs`;
+const PROJECTS_DIR = `${WORKSPACE_HOME}/projects`;
 const CLAUDE_BIN = '/Users/hrmacnair/.local/bin/claude';
 const CODEX_BIN  = '/Users/hrmacnair/.npm-global/bin/codex';
 
 if (!existsSync(RUNS_DIR)) mkdirSync(RUNS_DIR, { recursive: true });
+if (!existsSync(PROJECTS_DIR)) mkdirSync(PROJECTS_DIR, { recursive: true });
 
 let db: Database | null = null;
 function getDB(): Database {
@@ -62,11 +65,193 @@ export function initWorkspaceTables(): void {
       created_at INTEGER NOT NULL,
       started_at INTEGER,
       finished_at INTEGER,
-      log_path TEXT
+      log_path TEXT,
+      cost_usd REAL,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      cache_read_tokens INTEGER,
+      cache_create_tokens INTEGER
     )
   `);
   d.exec('CREATE INDEX IF NOT EXISTS idx_ws_tasks_project ON workspace_tasks(project_id)');
   d.exec('CREATE INDEX IF NOT EXISTS idx_ws_tasks_status ON workspace_tasks(status)');
+
+  // Migration: add cost columns if missing
+  const cols = d.prepare(`PRAGMA table_info(workspace_tasks)`).all() as any[];
+  const have = new Set(cols.map(c => c.name));
+  for (const col of ['cost_usd REAL', 'input_tokens INTEGER', 'output_tokens INTEGER', 'cache_read_tokens INTEGER', 'cache_create_tokens INTEGER']) {
+    const name = col.split(' ')[0];
+    if (!have.has(name)) d.exec(`ALTER TABLE workspace_tasks ADD COLUMN ${col}`);
+  }
+
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS workspace_pins (
+      task_id TEXT PRIMARY KEY,
+      pinned_at INTEGER NOT NULL
+    )
+  `);
+}
+
+// ---- Per-project memory (CLAUDE.md auto-injection) ----
+
+function projectMemoryDir(projectId: string): string {
+  return `${PROJECTS_DIR}/${projectId}`;
+}
+function projectMemoryPath(projectId: string): string {
+  return `${projectMemoryDir(projectId)}/CLAUDE.md`;
+}
+
+export function getProjectMemory(projectId: string): string {
+  const p = projectMemoryPath(projectId);
+  if (!existsSync(p)) return '';
+  try { return readFileSync(p, 'utf8'); } catch { return ''; }
+}
+
+export function setProjectMemory(projectId: string, body: string): { ok: boolean; error?: string } {
+  const dir = projectMemoryDir(projectId);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  try {
+    writeFileSync(projectMemoryPath(projectId), body, 'utf8');
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}
+
+// ---- Pinned task set (persisted, single operator) ----
+
+export function listPinnedIds(): string[] {
+  const d = getDB();
+  const rows = d.prepare(`SELECT task_id FROM workspace_pins ORDER BY pinned_at ASC`).all() as any[];
+  return rows.map(r => r.task_id);
+}
+
+export function pinTask(id: string): { ok: boolean; error?: string } {
+  const d = getDB();
+  const task = getTask(id);
+  if (!task) return { ok: false, error: 'task not found' };
+  d.prepare(`INSERT OR IGNORE INTO workspace_pins (task_id, pinned_at) VALUES (?, ?)`).run(id, Date.now());
+  return { ok: true };
+}
+export function unpinTask(id: string): { ok: boolean } {
+  const d = getDB();
+  d.prepare(`DELETE FROM workspace_pins WHERE task_id = ?`).run(id);
+  return { ok: true };
+}
+export function unpinAll(): { ok: boolean } {
+  const d = getDB();
+  d.prepare(`DELETE FROM workspace_pins`).run();
+  return { ok: true };
+}
+
+// ---- Vibe templates (static catalog) ----
+
+export interface VibeTemplate { id: string; name: string; category: string; description: string; body: string }
+export const TEMPLATES: VibeTemplate[] = [
+  {
+    id: 'next-page',
+    name: 'New Next.js page',
+    category: 'web',
+    description: 'Scaffold a route + page component + tests.',
+    body: 'Add a new Next.js page at app/<PATH>/page.tsx. Use server components. Read styling from existing pages. Add a smoke test in __tests__/.',
+  },
+  {
+    id: 'fix-bug',
+    name: 'Fix a specific bug',
+    category: 'general',
+    description: 'Diagnose + minimal-diff fix.',
+    body: 'There is a bug: <DESCRIBE>. Investigate root cause, then apply the minimal fix. Add a regression test if there is a test harness.',
+  },
+  {
+    id: 'add-tests',
+    name: 'Add tests for a module',
+    category: 'general',
+    description: 'Cover untested paths in a target file.',
+    body: 'Add tests for <FILE>. Use the existing test framework (detect from package.json or pyproject). Cover the public functions, happy path + at least one error case each.',
+  },
+  {
+    id: 'refactor',
+    name: 'Refactor without behavior change',
+    category: 'general',
+    description: 'Clean up a file/function in place.',
+    body: 'Refactor <FILE> to <GOAL — e.g. extract pure helpers, reduce nesting, remove dead code>. Behavior must not change; preserve every public signature and existing test result.',
+  },
+  {
+    id: 'swift-view',
+    name: 'New SwiftUI view',
+    category: 'swift',
+    description: 'Margin-style minimalist Apple view.',
+    body: 'Add a new SwiftUI view named <NAME> in the MarginUI module. Follow the project conventions (12pt corner radius, hairline borders, SF Pro text). Add a #Preview.',
+  },
+  {
+    id: 'design-pass',
+    name: 'Design polish pass',
+    category: 'design',
+    description: 'Apple-minimalist tightening pass.',
+    body: 'Do a polish pass on <SCOPE>. Standardize on 8/12/16/24/32/48 spacing, 12px radii, hairline borders, no movement on hover (only bg swaps). Match Apple HIG.',
+  },
+  {
+    id: 'doc-readme',
+    name: 'Write/update README',
+    category: 'general',
+    description: 'Crisp README for the project.',
+    body: 'Write or refresh README.md. Sections: one-line description, install, run dev, run tests, deploy, project layout. Read package.json or pyproject.toml for the actual scripts.',
+  },
+];
+
+// ---- Cost capture from claude stream-json ----
+
+interface CostUsage {
+  cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_create_tokens: number;
+}
+
+function parseStreamJsonCost(logText: string): CostUsage | null {
+  // Claude --output-format stream-json emits one JSON object per line. The
+  // final 'result' message includes total_cost_usd + usage. We scan from the
+  // end for the latest such message.
+  const lines = logText.split('\n').filter(l => l.trim().startsWith('{'));
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const m = JSON.parse(lines[i]);
+      if (m && (m.type === 'result' || typeof m.total_cost_usd === 'number' || m.usage)) {
+        const u = m.usage || {};
+        const cost = typeof m.total_cost_usd === 'number' ? m.total_cost_usd : 0;
+        return {
+          cost_usd: cost,
+          input_tokens: u.input_tokens || 0,
+          output_tokens: u.output_tokens || 0,
+          cache_read_tokens: u.cache_read_input_tokens || 0,
+          cache_create_tokens: u.cache_creation_input_tokens || 0,
+        };
+      }
+    } catch { /* skip non-JSON line */ }
+  }
+  return null;
+}
+
+// ---- Project spend rollup ----
+
+export interface ProjectSpend { project_id: string; cost_usd: number; tasks: number; tokens_input: number; tokens_output: number }
+
+export function spendByProject(): Record<string, ProjectSpend> {
+  const d = getDB();
+  const rows = d.prepare(`
+    SELECT project_id,
+           COUNT(*) AS tasks,
+           COALESCE(SUM(cost_usd), 0) AS cost_usd,
+           COALESCE(SUM(input_tokens), 0) AS tokens_input,
+           COALESCE(SUM(output_tokens), 0) AS tokens_output
+    FROM workspace_tasks
+    WHERE cost_usd IS NOT NULL
+    GROUP BY project_id
+  `).all() as any[];
+  const out: Record<string, ProjectSpend> = {};
+  for (const r of rows) out[r.project_id] = r;
+  return out;
 }
 
 // ---- Projects ----
@@ -79,11 +264,13 @@ export interface WorkspaceProject {
   task_counts?: { backlog: number; running: number; review: number; done: number };
 }
 
-export function listProjects(): WorkspaceProject[] {
+export interface WorkspaceProjectSpend { cost_usd: number; tasks: number }
+
+export function listProjects(): (WorkspaceProject & { spend?: WorkspaceProjectSpend })[] {
   const d = getDB();
   const rows = d.prepare(`
     SELECT id, name, path, created_at FROM workspace_projects ORDER BY created_at ASC
-  `).all() as WorkspaceProject[];
+  `).all() as (WorkspaceProject & { spend?: WorkspaceProjectSpend })[];
   const counts = d.prepare(`
     SELECT project_id, status, COUNT(*) AS n
     FROM workspace_tasks
@@ -94,6 +281,7 @@ export function listProjects(): WorkspaceProject[] {
     if (!byProj[c.project_id]) byProj[c.project_id] = {};
     byProj[c.project_id][c.status] = c.n;
   }
+  const spend = spendByProject();
   for (const r of rows) {
     const c = byProj[r.id] || {};
     r.task_counts = {
@@ -102,6 +290,8 @@ export function listProjects(): WorkspaceProject[] {
       review:  c.review  || 0,
       done:    c.done    || 0,
     };
+    const s = spend[r.id];
+    r.spend = { cost_usd: s?.cost_usd || 0, tasks: s?.tasks || 0 };
   }
   return rows;
 }
@@ -164,6 +354,11 @@ export interface WorkspaceTask {
   started_at: number | null;
   finished_at: number | null;
   log_path: string | null;
+  cost_usd: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_tokens: number | null;
+  cache_create_tokens: number | null;
   project_name?: string;
   project_path?: string;
 }
@@ -282,10 +477,14 @@ export function spawnTask(id: string): { ok: boolean; pid?: number; error?: stri
   let args: string[];
   const env: any = { ...process.env };
 
+  // Per-project memory: append CLAUDE.md to system prompt if present
+  const memory = getProjectMemory(task.project_id);
+
   if (cfg.backend === 'anthropic') {
     // claude --print: non-interactive, applies tool calls per permission mode.
     // safe = acceptEdits (auto-apply edits but prompt for shell/network)
     // auto = bypassPermissions (fully autonomous — vibe-coding mode)
+    // --output-format=stream-json gives us per-step events + final cost.
     delete env.ANTHROPIC_API_KEY; // prefer subscription auth
     const permMode = task.mode === 'auto' ? 'bypassPermissions' : 'acceptEdits';
     cmd = CLAUDE_BIN;
@@ -293,9 +492,11 @@ export function spawnTask(id: string): { ok: boolean; pid?: number; error?: stri
       '--print',
       '--model', cfg.model,
       '--permission-mode', permMode,
+      '--output-format', 'stream-json',
       '--verbose',
-      task.prompt,
     ];
+    if (memory) args.push('--append-system-prompt', memory);
+    args.push(task.prompt);
   } else if (cfg.backend === 'openai' || cfg.backend === 'ollama') {
     const sandbox = task.mode === 'auto' ? 'workspace-write' : 'read-only';
     cmd = CODEX_BIN;
@@ -306,7 +507,9 @@ export function spawnTask(id: string): { ok: boolean; pid?: number; error?: stri
       '-m', cfg.model,
     ];
     if (cfg.backend === 'ollama') args.push('--oss', '--local-provider', 'ollama');
-    args.push(task.prompt);
+    // codex has no append-system-prompt flag; prepend memory inline.
+    const fullPrompt = memory ? `${memory}\n\n---\n\n${task.prompt}` : task.prompt;
+    args.push(fullPrompt);
   } else {
     return { ok: false, error: `unsupported backend: ${cfg.backend}` };
   }
@@ -339,19 +542,44 @@ export function spawnTask(id: string): { ok: boolean; pid?: number; error?: stri
   child.stdout?.on('data', (b: Buffer) => onChunk('out', b));
   child.stderr?.on('data', (b: Buffer) => onChunk('err', b));
 
-  child.on('exit', (code) => {
+  child.on('exit', async (code) => {
     const exitCode = code ?? -1;
     writer.write(`\n----\n# exited: ${new Date().toISOString()} (code ${exitCode})\n`);
     writer.end();
     liveProcs.delete(id);
     const d = getDB();
     const nextStatus: WorkspaceTask['status'] = exitCode === 0 ? 'review' : 'failed';
-    d.prepare(`
-      UPDATE workspace_tasks
-      SET status = ?, exit_code = ?, finished_at = ?
-      WHERE id = ?
-    `).run(nextStatus, exitCode, Date.now(), id);
-    broadcast({ type: 'workspace.task', data: { taskId: id, status: nextStatus, exit_code: exitCode } });
+
+    // Parse cost from stream-json log (Claude backend only)
+    let cost: CostUsage | null = null;
+    if (cfg.backend === 'anthropic') {
+      try {
+        const logText = await Bun.file(logPath).text();
+        cost = parseStreamJsonCost(logText);
+      } catch { /* non-fatal */ }
+    }
+
+    if (cost) {
+      d.prepare(`
+        UPDATE workspace_tasks
+        SET status = ?, exit_code = ?, finished_at = ?,
+            cost_usd = ?, input_tokens = ?, output_tokens = ?,
+            cache_read_tokens = ?, cache_create_tokens = ?
+        WHERE id = ?
+      `).run(nextStatus, exitCode, Date.now(),
+             cost.cost_usd, cost.input_tokens, cost.output_tokens,
+             cost.cache_read_tokens, cost.cache_create_tokens, id);
+    } else {
+      d.prepare(`
+        UPDATE workspace_tasks
+        SET status = ?, exit_code = ?, finished_at = ?
+        WHERE id = ?
+      `).run(nextStatus, exitCode, Date.now(), id);
+    }
+    broadcast({
+      type: 'workspace.task',
+      data: { taskId: id, status: nextStatus, exit_code: exitCode, cost_usd: cost?.cost_usd },
+    });
   });
 
   child.on('error', (err) => {

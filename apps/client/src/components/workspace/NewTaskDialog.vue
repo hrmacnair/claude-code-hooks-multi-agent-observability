@@ -6,6 +6,23 @@
         <button class="dialog__x" @click="$emit('close')">✕</button>
       </header>
 
+      <!-- Vibe templates -->
+      <div v-if="templates.length" class="templates">
+        <span class="templates__label">Templates</span>
+        <div class="templates__chips">
+          <button
+            v-for="t in templates"
+            :key="t.id"
+            type="button"
+            class="templates__chip"
+            :title="t.description"
+            @click="applyTemplate(t)"
+          >
+            <span class="templates__cat">{{ t.category }}</span>{{ t.name }}
+          </button>
+        </div>
+      </div>
+
       <label class="field">
         <span class="field__label">Project</span>
         <select v-model="projectId" class="field__input">
@@ -19,7 +36,10 @@
       </label>
 
       <label class="field">
-        <span class="field__label">Prompt</span>
+        <span class="field__label">
+          <span>Prompt</span>
+          <VoiceMic v-model="prompt" />
+        </span>
         <textarea v-model="prompt" class="field__input field__input--textarea" rows="6"
           placeholder="Describe what you want the agent to do. Be specific — files, behavior, tests."></textarea>
       </label>
@@ -61,9 +81,16 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
-import type { WSProject } from '../../composables/useWorkspace';
+import type { WSProject, VibeTemplate } from '../../composables/useWorkspace';
+import VoiceMic from './VoiceMic.vue';
 
-const props = defineProps<{ projects: WSProject[]; defaultProjectId?: string | null }>();
+const props = defineProps<{ projects: WSProject[]; defaultProjectId?: string | null; templates?: VibeTemplate[] }>();
+const templates = computed(() => props.templates || []);
+
+function applyTemplate(t: VibeTemplate) {
+  if (!title.value.trim()) title.value = t.name;
+  prompt.value = prompt.value ? `${prompt.value}\n\n${t.body}` : t.body;
+}
 const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'create', payload: { project_id: string; title: string; prompt: string; model: string; mode: 'safe' | 'auto' }, runImmediately: boolean): void;
@@ -135,6 +162,30 @@ function doSubmit(run: boolean) {
 .field__label {
   font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
   color: var(--atlas-text-secondary);
+  display: flex; justify-content: space-between; align-items: center;
+}
+
+.templates { display: flex; flex-direction: column; gap: 6px; }
+.templates__label {
+  font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--atlas-text-secondary);
+}
+.templates__chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.templates__chip {
+  background: var(--atlas-card-bg);
+  border: 1px solid var(--atlas-hairline);
+  font-family: inherit;
+  font-size: 11.5px;
+  color: var(--atlas-text-primary);
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.templates__chip:hover { border-color: var(--atlas-blue); background: rgba(94,158,255,0.06); }
+.templates__cat {
+  font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--atlas-text-secondary); opacity: 0.7;
 }
 .field__input {
   background: var(--atlas-card-bg);

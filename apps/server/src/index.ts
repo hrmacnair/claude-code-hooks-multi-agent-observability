@@ -64,6 +64,13 @@ import {
   spawnTask as spawnWorkspaceTask,
   killTask as killWorkspaceTask,
   getTaskLog as getWorkspaceTaskLog,
+  getProjectMemory,
+  setProjectMemory,
+  listPinnedIds,
+  pinTask as pinWorkspaceTask,
+  unpinTask as unpinWorkspaceTask,
+  unpinAll as unpinAllWorkspace,
+  TEMPLATES as WORKSPACE_TEMPLATES,
 } from './atlas-workspace';
 
 // Initialize database
@@ -1573,6 +1580,58 @@ const server = Bun.serve({
       const r = await getWorkspaceTaskLog(wsTaskLog[1], { tail });
       return new Response(JSON.stringify(r), {
         status: r.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // ---- Phase 3: memory / pins / templates ----
+    const wsProjMem = url.pathname.match(/^\/api\/atlas\/workspace\/projects\/([^\/]+)\/memory$/);
+    if (wsProjMem && req.method === 'GET') {
+      const body = getProjectMemory(wsProjMem[1]);
+      return new Response(JSON.stringify({ body }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (wsProjMem && req.method === 'PUT') {
+      let body: any = {}; try { body = await req.json(); } catch {}
+      const r = setProjectMemory(wsProjMem[1], String(body.body ?? ''));
+      return new Response(JSON.stringify(r), {
+        status: r.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/workspace/pins' && req.method === 'GET') {
+      return new Response(JSON.stringify({ pinnedIds: listPinnedIds() }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/workspace/pins' && req.method === 'POST') {
+      let body: any = {}; try { body = await req.json(); } catch {}
+      const id = body.task_id || body.taskId;
+      if (!id) return new Response(JSON.stringify({ ok: false, error: 'task_id required' }), {
+        status: 400, headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+      const r = pinWorkspaceTask(id);
+      return new Response(JSON.stringify(r), {
+        status: r.ok ? 200 : 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/workspace/pins' && req.method === 'DELETE') {
+      const r = unpinAllWorkspace();
+      return new Response(JSON.stringify(r), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    const wsPinDel = url.pathname.match(/^\/api\/atlas\/workspace\/pins\/([^\/]+)$/);
+    if (wsPinDel && req.method === 'DELETE') {
+      const r = unpinWorkspaceTask(wsPinDel[1]);
+      return new Response(JSON.stringify(r), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+    if (url.pathname === '/api/atlas/workspace/templates' && req.method === 'GET') {
+      return new Response(JSON.stringify({ templates: WORKSPACE_TEMPLATES }), {
         headers: { ...headers, 'Content-Type': 'application/json' }
       });
     }
