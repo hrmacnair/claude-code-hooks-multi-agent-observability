@@ -124,7 +124,7 @@ function summarizePhase(project: string, file: string): PhaseSummary | null {
   };
 }
 
-const SAFE_SLUG = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const SAFE_SLUG = /^[a-z0-9_][a-z0-9_-]{0,63}$/;
 
 export function readPlanForProject(project: string): PlanSummary {
   const empty: PlanSummary = {
