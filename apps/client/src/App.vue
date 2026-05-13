@@ -109,6 +109,7 @@
     </main>
 
     <p v-if="error" class="atlas-page__error">{{ error }}</p>
+    <div v-if="planToast" class="atlas-page__toast" :class="{ 'is-err': planToastIsErr }">{{ planToast }}</div>
   </div>
 
   <BriefReadingView
@@ -330,37 +331,65 @@ const KNOWN_DIVISIONS: Array<{ slug: string; planSlug?: string }> = [
   { slug: 'industry', planSlug: 'industry' },
 ];
 const { plans } = useAtlasPlans();
-function onAddPlan(slug: string) {
-  // v1: Add Plan surfaces the operator-facing command rather than
-  // shelling out. The dashboard runs in the browser; spinup-plan is a
-  // Claude Code slash command. Copy to clipboard for one-click hand-off.
+// ===== Inline toast for plan actions =====
+const planToast = ref('');
+const planToastIsErr = ref(false);
+let planToastTimer: any = null;
+function flashPlanToast(msg: string, isErr = false) {
+  planToast.value = msg;
+  planToastIsErr.value = isErr;
+  if (planToastTimer) clearTimeout(planToastTimer);
+  planToastTimer = setTimeout(() => { planToast.value = ''; }, 3000);
+}
+
+async function dispatchAtlasEvent(event: string, payload: Record<string, any>): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/atlas/events/dispatch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event, payload }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function onAddPlan(slug: string) {
+  const ok = await dispatchAtlasEvent('SpinupPlanRequested', { project: slug, depth: 'quick' });
+  if (ok) {
+    flashPlanToast(`@Producer is drafting a plan for ${slug}…`);
+    return;
+  }
+  // Fallback: dispatch failed — surface the manual path.
   const cmd = `/spinup-plan ${slug} --quick`;
   try {
     if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
       navigator.clipboard.writeText(cmd);
     }
   } catch { /* ignore */ }
-  // TODO(v2): once the dashboard has a control plane that can shell out to
-  // Claude Code, replace the clipboard nudge with an actual spawn here.
-  window.alert(`Run this in Claude Code:\n\n${cmd}\n\n(copied to clipboard)`);
+  flashPlanToast(`Dispatch failed — run ${cmd} manually (copied)`, true);
 }
+
 async function onArchivePlan(slug: string) {
-  // The destructive confirm is in PlanPhases.vue; here we just dispatch.
-  // The phase.sh CLI does the actual `mv plan/ plan/archive/<ts>/` work
-  // and fires the audit event. From the browser we can't shell out, so
-  // we fire a synthetic PlanArchived to refresh the UI and surface the
-  // command the operator should run.
-  const cmd = `phase archive-plan ${slug}`;
+  // PlanPhases.vue already confirmed destructive intent. We dispatch the
+  // event and let Producer shell out to phase.sh archive-plan, which fires
+  // the canonical PlanArchived audit event.
+  const ok = await dispatchAtlasEvent('PlanArchiveRequested', { project: slug });
+  if (ok) {
+    flashPlanToast(`Archiving ${slug} plan…`);
+    // Best-effort hint to refresh other clients listening on the bus.
+    await postAtlasEvent('PlanArchived', { project: slug });
+    return;
+  }
+  // Fallback: dispatch failed — surface the manual path.
+  const cmd = `bash ~/atlas/scripts/phase.sh archive-plan ${slug}`;
   try {
     if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
       navigator.clipboard.writeText(cmd);
     }
   } catch { /* ignore */ }
-  // TODO(v2): once the dashboard can shell out, run the CLI directly here
-  // instead of asking the operator to copy/paste.
-  window.alert(`Run this from your terminal:\n\n${cmd}\n\n(copied to clipboard)`);
-  // Best-effort fire to refresh other clients listening on the bus.
-  await postAtlasEvent('PlanArchived', { project: slug });
+  flashPlanToast(`Dispatch failed — run ${cmd} manually (copied)`, true);
 }
 const plansWithBoards = computed(() =>
   Object.values(plans.value).filter(p => p.hasPlan)
@@ -490,5 +519,27 @@ const divisionRows = computed(() => {
   position: fixed; bottom: 16px; left: 16px; z-index: 60;
   padding: 8px 12px; font-size: 12px; color: var(--atlas-red);
   background: var(--atlas-card-bg); border: 1px solid rgba(255, 59, 48, 0.40); border-radius: 8px;
+}
+
+.atlas-page__toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(28,28,30,0.95);
+  color: #FFF;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 9px 16px;
+  border-radius: 999px;
+  z-index: 90;
+  pointer-events: none;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  animation: atlas-toast-in 160ms ease;
+}
+.atlas-page__toast.is-err { background: rgba(255,59,48,0.95); }
+@keyframes atlas-toast-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
 }
 </style>
