@@ -124,13 +124,17 @@ function summarizePhase(project: string, file: string): PhaseSummary | null {
   };
 }
 
+const SAFE_SLUG = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
 export function readPlanForProject(project: string): PlanSummary {
-  const planDir = join(PROJECTS_DIR, project, 'plan');
   const empty: PlanSummary = {
     project, hasPlan: false, locked: false, locked_at: null,
     depth: null, owner_agent: null, target_done: null, created: null,
     phases: [], timeline: [], questions: 0,
   };
+  if (!SAFE_SLUG.test(project)) return empty;
+  const planDir = join(PROJECTS_DIR, project, 'plan');
+  if (!planDir.startsWith(PROJECTS_DIR + '/')) return empty;
   if (!existsSync(planDir)) return empty;
   // Treat plan/ as missing if only archive/ remains (and nothing else).
   let entries: string[] = [];
