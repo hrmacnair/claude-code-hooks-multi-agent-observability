@@ -329,6 +329,7 @@ const KNOWN_DIVISIONS: Array<{ slug: string; planSlug?: string }> = [
   { slug: 'atlas-meta' },
   { slug: 'margin', planSlug: 'margin' },
   { slug: 'industry', planSlug: 'industry' },
+  { slug: '_planlab', planSlug: '_planlab' },
 ];
 const { plans } = useAtlasPlans();
 // ===== Inline toast for plan actions =====
