@@ -42,6 +42,14 @@ import {
   dispatchLocal,
 } from './atlas-events';
 import {
+  listAllPlans,
+  readPlanForProject,
+  setPlanBroadcaster,
+  startPlanWatcher,
+  isPlanEvent,
+  handlePlanEvent,
+} from './atlas-plan';
+import {
   listCandidates,
   getCandidate,
   listTrials,
@@ -103,6 +111,15 @@ setWorkspaceBroadcast((msg) => {
   const payload = JSON.stringify(msg);
   wsClients.forEach(c => { try { c.send(payload); } catch { wsClients.delete(c); } });
 });
+
+// Wire /spinup-plan broadcast → WS clients (plan_update messages).
+setPlanBroadcaster((msg) => {
+  const payload = JSON.stringify(msg);
+  wsClients.forEach(c => { try { c.send(payload); } catch { wsClients.delete(c); } });
+});
+
+// Watch ~/atlas/projects/*/plan/ for filesystem changes and push diffs.
+try { startPlanWatcher(); } catch (err: any) { console.warn('[plan] watcher init failed:', err.message); }
 
 // Auto-archive sweep: done tasks older than 24h. Runs on boot and hourly.
 try { autoArchiveWorkspaceSweep(); } catch (err: any) { console.warn('[workspace] initial auto-archive failed:', err.message); }
@@ -1113,8 +1130,31 @@ const server = Bun.serve({
     if (url.pathname === '/api/atlas/events/dispatch' && req.method === 'POST') {
       let body: any = {};
       try { body = await req.json(); } catch {}
-      const r = dispatchLocal(body.event || '', body.payload || {});
+      const eventType = body.event || '';
+      const payload = body.payload || {};
+      // Intercept /spinup-plan events: audit + broadcast a fresh plan snapshot.
+      if (isPlanEvent(eventType)) {
+        try { handlePlanEvent(eventType, payload); }
+        catch (err: any) { console.warn('[plan] handlePlanEvent failed:', err.message); }
+      }
+      const r = dispatchLocal(eventType, payload);
       return new Response(JSON.stringify(r), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // GET /api/atlas/plans — current snapshot of every project's plan state.
+    // Used by the dashboard for initial render before WS updates arrive.
+    if (url.pathname === '/api/atlas/plans' && req.method === 'GET') {
+      return new Response(JSON.stringify({ plans: listAllPlans() }), {
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // GET /api/atlas/plans/:project — single project's plan snapshot.
+    const planGet = url.pathname.match(/^\/api\/atlas\/plans\/([^\/]+)$/);
+    if (planGet && req.method === 'GET') {
+      return new Response(JSON.stringify(readPlanForProject(planGet[1])), {
         headers: { ...headers, 'Content-Type': 'application/json' }
       });
     }
