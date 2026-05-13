@@ -72,7 +72,23 @@
             :active-missions="d.activeMissions"
             :last-action-ago="d.lastActionAgo"
             :last-summary="d.lastSummary"
+            :plan-slug="d.planSlug"
+            :has-plan="d.hasPlan"
+            :plan-locked="d.planLocked"
             @open="divisionDrawer = d.slug"
+            @add-plan="onAddPlan"
+          />
+        </div>
+
+        <!-- /spinup-plan phase board — one per project that has a plan/. -->
+        <div v-if="plansWithBoards.length > 0" class="atlas-page__plans">
+          <PlanPhases
+            v-for="p in plansWithBoards"
+            :key="p.project"
+            :project="p.project"
+            :plan="p"
+            @add-plan="onAddPlan"
+            @archive-plan="onArchivePlan"
           />
         </div>
 
@@ -133,6 +149,8 @@ import WordmarkRow from './components/dashboard/WordmarkRow.vue';
 import StatusRow from './components/dashboard/StatusRow.vue';
 import StatTile from './components/dashboard/StatTile.vue';
 import DivisionTile from './components/dashboard/DivisionTile.vue';
+import PlanPhases from './components/dashboard/PlanPhases.vue';
+import { useAtlasPlans, postAtlasEvent } from './composables/useAtlasPlans';
 import TalkCard from './components/dashboard/cards/TalkCard.vue';
 import LiveActivityCard from './components/dashboard/cards/LiveActivityCard.vue';
 import TodaysBriefCard from './components/dashboard/cards/TodaysBriefCard.vue';
@@ -304,11 +322,49 @@ const ghSub = computed(() => {
 });
 
 // ===== Division tiles =====
-const KNOWN_DIVISIONS = [
+// `planSlug` maps the division to a project folder under ~/atlas/projects/.
+// atlas-meta has no 1:1 project, so it stays undefined (no plan chip).
+const KNOWN_DIVISIONS: Array<{ slug: string; planSlug?: string }> = [
   { slug: 'atlas-meta' },
-  { slug: 'margin' },
-  { slug: 'industry' },
+  { slug: 'margin', planSlug: 'margin' },
+  { slug: 'industry', planSlug: 'industry' },
 ];
+const { plans } = useAtlasPlans();
+function onAddPlan(slug: string) {
+  // v1: Add Plan surfaces the operator-facing command rather than
+  // shelling out. The dashboard runs in the browser; spinup-plan is a
+  // Claude Code slash command. Copy to clipboard for one-click hand-off.
+  const cmd = `/spinup-plan ${slug} --quick`;
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(cmd);
+    }
+  } catch { /* ignore */ }
+  // TODO(v2): once the dashboard has a control plane that can shell out to
+  // Claude Code, replace the clipboard nudge with an actual spawn here.
+  window.alert(`Run this in Claude Code:\n\n${cmd}\n\n(copied to clipboard)`);
+}
+async function onArchivePlan(slug: string) {
+  // The destructive confirm is in PlanPhases.vue; here we just dispatch.
+  // The phase.sh CLI does the actual `mv plan/ plan/archive/<ts>/` work
+  // and fires the audit event. From the browser we can't shell out, so
+  // we fire a synthetic PlanArchived to refresh the UI and surface the
+  // command the operator should run.
+  const cmd = `phase archive-plan ${slug}`;
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(cmd);
+    }
+  } catch { /* ignore */ }
+  // TODO(v2): once the dashboard can shell out, run the CLI directly here
+  // instead of asking the operator to copy/paste.
+  window.alert(`Run this from your terminal:\n\n${cmd}\n\n(copied to clipboard)`);
+  // Best-effort fire to refresh other clients listening on the bus.
+  await postAtlasEvent('PlanArchived', { project: slug });
+}
+const plansWithBoards = computed(() =>
+  Object.values(plans.value).filter(p => p.hasPlan)
+);
 function relTimeNum(t: number): string {
   const s = Math.floor((Date.now() - t) / 1000);
   if (s < 60) return `${s}s`;
@@ -333,6 +389,7 @@ const divisionRows = computed(() => {
     const last = events24h[events24h.length - 1];
     const lastTs = last?.timestamp;
     const lastSummary = (last?.summary || last?.payload?.summary || last?.payload?.tool_input?.command || '').toString();
+    const plan = d.planSlug ? plans.value[d.planSlug] : undefined;
     return {
       slug: d.slug,
       health: (events24h.length === 0 ? 'idle' : 'active') as 'idle' | 'active',
@@ -340,6 +397,9 @@ const divisionRows = computed(() => {
       activeMissions: am,
       lastActionAgo: lastTs ? relTimeNum(lastTs) : '—',
       lastSummary,
+      planSlug: d.planSlug,
+      hasPlan: !!plan?.hasPlan,
+      planLocked: !!plan?.locked,
     };
   });
 });
@@ -386,6 +446,11 @@ const divisionRows = computed(() => {
   flex-direction: column;
   gap: 24px;
   min-width: 0;
+}
+.atlas-page__plans {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 .atlas-page__aside {
   position: sticky;

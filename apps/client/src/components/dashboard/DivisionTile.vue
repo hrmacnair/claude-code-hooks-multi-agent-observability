@@ -2,6 +2,13 @@
   <button class="div-tile" :class="`div-tile--${health}`" @click="$emit('open')">
     <div class="dt__head">
       <span class="dt__name">{{ name }}</span>
+      <span
+        v-if="planSlug"
+        class="dt__plan-chip"
+        :class="hasPlan ? (planLocked ? 'dt__plan-chip--locked' : 'dt__plan-chip--draft') : 'dt__plan-chip--empty'"
+      >
+        {{ hasPlan ? (planLocked ? 'plan locked' : 'drafting') : 'no plan' }}
+      </span>
       <span class="dt__dot" :class="`dt__dot--${health}`"></span>
     </div>
     <div class="dt__metrics">
@@ -19,6 +26,19 @@
       </div>
     </div>
     <div v-if="lastSummary" class="dt__last">{{ lastSummary }}</div>
+    <!-- When this tile represents an Atlas project with no plan yet, surface
+         a compact Add Plan button. Click stops propagation so the tile's
+         "open division drawer" handler doesn't also fire. -->
+    <div v-if="planSlug && !hasPlan" class="dt__plan-row">
+      <span
+        class="dt__plan-btn"
+        role="button"
+        tabindex="0"
+        @click.stop="$emit('add-plan', planSlug!)"
+        @keydown.enter.stop="$emit('add-plan', planSlug!)"
+        @keydown.space.stop="$emit('add-plan', planSlug!)"
+      >Add Plan</span>
+    </div>
   </button>
 </template>
 
@@ -30,8 +50,17 @@ defineProps<{
   activeMissions: number;
   lastActionAgo: string;
   lastSummary?: string;
+  // Plan integration — `planSlug` is the project slug under ~/atlas/projects/
+  // when the tile represents a project (not all divisions map 1:1). When
+  // omitted, the plan chip + Add Plan button stay hidden.
+  planSlug?: string;
+  hasPlan?: boolean;
+  planLocked?: boolean;
 }>();
-defineEmits<{ (e: 'open'): void }>();
+defineEmits<{
+  (e: 'open'): void;
+  (e: 'add-plan', slug: string): void;
+}>();
 </script>
 
 <style scoped>
@@ -83,4 +112,31 @@ defineEmits<{ (e: 'open'): void }>();
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.dt__plan-chip {
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(127,127,127,0.18);
+  color: var(--atlas-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 500;
+}
+.dt__plan-chip--locked { background: rgba(48,209,88,0.18); color: var(--atlas-green); }
+.dt__plan-chip--draft  { background: rgba(10,132,255,0.18); color: var(--atlas-blue, #0a84ff); }
+.dt__plan-chip--empty  { background: rgba(255,159,10,0.14); color: var(--atlas-orange, #ff9f0a); }
+
+.dt__plan-row { display: flex; }
+.dt__plan-btn {
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--atlas-hairline);
+  background: transparent;
+  color: var(--atlas-text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.dt__plan-btn:hover { background: var(--atlas-card-bg-2, rgba(127,127,127,0.10)); }
 </style>
